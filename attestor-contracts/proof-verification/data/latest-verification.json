@@ -1,0 +1,95 @@
+{
+  "taskId": "5",
+  "timestamp": "2025-06-26T19:36:02.206Z",
+  "transactionHash": null,
+  "verificationCost": null,
+  "success": false,
+  "consensusReached": false,
+  "error": "任务 5 已经被验证过了",
+  "inputData": {
+    "proofsCount": 2,
+    "proofs": [
+      {
+        "claimInfo": {
+          "provider": "http",
+          "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+          "context": "{\"extractedParameters\":{\"price\":\"2433.68000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+        },
+        "signedClaim": {
+          "claim": {
+            "identifier": "0x8978bba36f9751059c8586d201afaf4c224bb8b7520c81ba0eec424b281aa458",
+            "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+            "timestampS": 1750965611,
+            "epoch": 1
+          },
+          "signatures": [
+            "0xa800dc79b5739a45ca618695c180413c6a2c95f0628d5d01f5d19b13d7b7a3b86dfc6ffb462f311892e45932ecfaad826a3fbefb6e99abfeb490acfe06db16db1b"
+          ]
+        }
+      },
+      {
+        "claimInfo": {
+          "provider": "http",
+          "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+          "context": "{\"extractedParameters\":{\"price\":\"2433.54000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+        },
+        "signedClaim": {
+          "claim": {
+            "identifier": "0x147d531065295ab51c16d4f659153363aa2103c5a3e22527657f777919939380",
+            "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+            "timestampS": 1750965614,
+            "epoch": 1
+          },
+          "signatures": [
+            "0x1689cc29c0094cad64de3c7c414d69f9737f0c4dabbc1fef9342adba4dfc670134b6becfcc3e0d9348af7e8105083d816205ed7f0598e8542e6c0a618a9aecce1b"
+          ]
+        }
+      }
+    ]
+  },
+  "rpcRequest": {
+    "method": "verifyProofs",
+    "params": {
+      "proofs": [
+        {
+          "claimInfo": {
+            "provider": "http",
+            "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+            "context": "{\"extractedParameters\":{\"price\":\"2433.68000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+          },
+          "signedClaim": {
+            "claim": {
+              "identifier": "0x8978bba36f9751059c8586d201afaf4c224bb8b7520c81ba0eec424b281aa458",
+              "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+              "timestampS": 1750965611,
+              "epoch": 1
+            },
+            "signatures": [
+              "0xa800dc79b5739a45ca618695c180413c6a2c95f0628d5d01f5d19b13d7b7a3b86dfc6ffb462f311892e45932ecfaad826a3fbefb6e99abfeb490acfe06db16db1b"
+            ]
+          }
+        },
+        {
+          "claimInfo": {
+            "provider": "http",
+            "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+            "context": "{\"extractedParameters\":{\"price\":\"2433.54000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+          },
+          "signedClaim": {
+            "claim": {
+              "identifier": "0x147d531065295ab51c16d4f659153363aa2103c5a3e22527657f777919939380",
+              "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+              "timestampS": 1750965614,
+              "epoch": 1
+            },
+            "signatures": [
+              "0x1689cc29c0094cad64de3c7c414d69f9737f0c4dabbc1fef9342adba4dfc670134b6becfcc3e0d9348af7e8105083d816205ed7f0598e8542e6c0a618a9aecce1b"
+            ]
+          }
+        }
+      ],
+      "taskId": 5,
+      "value": null
+    }
+  }
+}

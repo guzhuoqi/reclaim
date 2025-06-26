@@ -1,0 +1,7 @@
+node_modules
+/lib
+browser/resources
+example-local
+.github
+docker-compose.yaml
+attestor.dockerfile

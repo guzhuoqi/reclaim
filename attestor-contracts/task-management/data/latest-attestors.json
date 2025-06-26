@@ -1,0 +1,16 @@
+{
+  "taskId": "4",
+  "timestamp": "2025-06-26T18:36:01.030Z",
+  "seed": "0x4f6f15673a2b4bb2be57347eedbb421f420e91235ba542a508024b562c3c73c1",
+  "requestTimestamp": 1750962950,
+  "attestors": [
+    {
+      "address": "0xaef2Ba08B0f836c81ed975452507825B5497e62f",
+      "host": "wss://devint-reclaim0.mechain.tech/ws"
+    },
+    {
+      "address": "0x9D27Ffaa734bE554834945Aff5F3Fa6DA41db132",
+      "host": "wss://devint-reclaim1.mechain.tech/ws"
+    }
+  ]
+}

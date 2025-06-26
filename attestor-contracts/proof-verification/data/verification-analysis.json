@@ -1,0 +1,25 @@
+{
+  "taskId": "5",
+  "timestamp": "2025-06-26T19:35:26.369Z",
+  "success": true,
+  "consensusReached": true,
+  "transactionHash": "0xa89cb5dddda39f3f4a38d070dcc67eb3d84604f3b46cd172e548edff49f1fe52",
+  "verificationCost": "1000000000000000000",
+  "proofsCount": 2,
+  "proofsAnalysis": [
+    {
+      "provider": "http",
+      "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+      "timestampS": 1750965611,
+      "epoch": 1,
+      "signaturesCount": 1
+    },
+    {
+      "provider": "http",
+      "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+      "timestampS": 1750965614,
+      "epoch": 1,
+      "signaturesCount": 1
+    }
+  ]
+}
