@@ -11,7 +11,7 @@ const config: HardhatUserConfig = {
     hardhat: {},
     'mechain-testnet': {
       accounts: PRIVATE_KEY ? [PRIVATE_KEY] : [],
-      url: 'https://testnet-rpc.mechain.tech'
+      url: 'https://devnet-rpc.mocachain.org'
     },
     sepolia: {
       accounts: PRIVATE_KEY ? [PRIVATE_KEY] : [],

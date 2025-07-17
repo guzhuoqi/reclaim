@@ -48,5 +48,255 @@
     },
     "gasEstimate": "281348",
     "network": "https://testnet-rpc.mechain.tech"
+  },
+  {
+    "taskId": "4",
+    "timestamp": "2025-06-29T14:50:28.373Z",
+    "method": "verifyProofs",
+    "contractAddress": "0x2ce4693Ea2a41941F0A798A62BC1eE9c3c31c820",
+    "params": {
+      "proofs": [
+        {
+          "claimInfo": {
+            "provider": "http",
+            "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+            "context": "{\"extractedParameters\":{\"price\":\"2437.93000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+          },
+          "signedClaim": {
+            "claim": {
+              "identifier": "0x7162a3f3af9d59b5c03ea8a06453ebce84dc4fd1085045071d6ef8cfddc3ab49",
+              "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+              "timestampS": 1750967705,
+              "epoch": 1
+            },
+            "signatures": [
+              "0x0150bca1071eaa64d2373fadf01e964adbf59a4d41d92d451ab600cd553285346f3dec680ac5ff1cedaa51613cc489824a0c8ed8df0c5008048e5c5206853f731b"
+            ]
+          }
+        },
+        {
+          "claimInfo": {
+            "provider": "http",
+            "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+            "context": "{\"extractedParameters\":{\"price\":\"2438.14000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+          },
+          "signedClaim": {
+            "claim": {
+              "identifier": "0x42f145a8b61f5a9d1c3ea242b1a9238e2e9a8bcbb7db7ec666cfc47c421cfe4a",
+              "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+              "timestampS": 1750967710,
+              "epoch": 1
+            },
+            "signatures": [
+              "0xcfe5dd58860dfd5bb07d53f9489a18fe84e800b0005f0710bd1c69e89ccefe9c766c89b93ad3bcd25de50c48969bed2e36012a8381280f09bb818fc15b73ba881c"
+            ]
+          }
+        }
+      ],
+      "taskId": 4,
+      "value": "1000000000000000000"
+    },
+    "gasEstimate": "299149",
+    "network": "https://testnet-rpc.mechain.tech"
+  },
+  {
+    "taskId": "4",
+    "timestamp": "2025-07-11T07:39:49.496Z",
+    "method": "verifyProofs",
+    "contractAddress": "0x2ce4693Ea2a41941F0A798A62BC1eE9c3c31c820",
+    "params": {
+      "proofs": [
+        {
+          "claimInfo": {
+            "provider": "http",
+            "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+            "context": "{\"extractedParameters\":{\"price\":\"2437.93000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+          },
+          "signedClaim": {
+            "claim": {
+              "identifier": "0x7162a3f3af9d59b5c03ea8a06453ebce84dc4fd1085045071d6ef8cfddc3ab49",
+              "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+              "timestampS": 1750967705,
+              "epoch": 1
+            },
+            "signatures": [
+              "0x0150bca1071eaa64d2373fadf01e964adbf59a4d41d92d451ab600cd553285346f3dec680ac5ff1cedaa51613cc489824a0c8ed8df0c5008048e5c5206853f731b"
+            ]
+          }
+        },
+        {
+          "claimInfo": {
+            "provider": "http",
+            "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+            "context": "{\"extractedParameters\":{\"price\":\"2438.14000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+          },
+          "signedClaim": {
+            "claim": {
+              "identifier": "0x42f145a8b61f5a9d1c3ea242b1a9238e2e9a8bcbb7db7ec666cfc47c421cfe4a",
+              "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+              "timestampS": 1750967710,
+              "epoch": 1
+            },
+            "signatures": [
+              "0xcfe5dd58860dfd5bb07d53f9489a18fe84e800b0005f0710bd1c69e89ccefe9c766c89b93ad3bcd25de50c48969bed2e36012a8381280f09bb818fc15b73ba881c"
+            ]
+          }
+        }
+      ],
+      "taskId": 4,
+      "value": "1000000000000000000"
+    },
+    "gasEstimate": null,
+    "network": "https://testnet-rpc.mechain.tech"
+  },
+  {
+    "taskId": "4",
+    "timestamp": "2025-07-11T08:21:12.420Z",
+    "method": "verifyProofs",
+    "contractAddress": "0x2ce4693Ea2a41941F0A798A62BC1eE9c3c31c820",
+    "params": {
+      "proofs": [
+        {
+          "claimInfo": {
+            "provider": "http",
+            "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+            "context": "{\"extractedParameters\":{\"price\":\"2437.93000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+          },
+          "signedClaim": {
+            "claim": {
+              "identifier": "0x7162a3f3af9d59b5c03ea8a06453ebce84dc4fd1085045071d6ef8cfddc3ab49",
+              "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+              "timestampS": 1750967705,
+              "epoch": 1
+            },
+            "signatures": [
+              "0x0150bca1071eaa64d2373fadf01e964adbf59a4d41d92d451ab600cd553285346f3dec680ac5ff1cedaa51613cc489824a0c8ed8df0c5008048e5c5206853f731b"
+            ]
+          }
+        },
+        {
+          "claimInfo": {
+            "provider": "http",
+            "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+            "context": "{\"extractedParameters\":{\"price\":\"2438.14000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+          },
+          "signedClaim": {
+            "claim": {
+              "identifier": "0x42f145a8b61f5a9d1c3ea242b1a9238e2e9a8bcbb7db7ec666cfc47c421cfe4a",
+              "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+              "timestampS": 1750967710,
+              "epoch": 1
+            },
+            "signatures": [
+              "0xcfe5dd58860dfd5bb07d53f9489a18fe84e800b0005f0710bd1c69e89ccefe9c766c89b93ad3bcd25de50c48969bed2e36012a8381280f09bb818fc15b73ba881c"
+            ]
+          }
+        }
+      ],
+      "taskId": 4,
+      "value": "1000000000000000000"
+    },
+    "gasEstimate": null,
+    "network": "https://testnet-rpc.mechain.tech"
+  },
+  {
+    "taskId": "4",
+    "timestamp": "2025-07-11T08:25:08.947Z",
+    "method": "verifyProofs",
+    "contractAddress": "0x2ce4693Ea2a41941F0A798A62BC1eE9c3c31c820",
+    "params": {
+      "proofs": [
+        {
+          "claimInfo": {
+            "provider": "http",
+            "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+            "context": "{\"extractedParameters\":{\"price\":\"2437.93000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+          },
+          "signedClaim": {
+            "claim": {
+              "identifier": "0x7162a3f3af9d59b5c03ea8a06453ebce84dc4fd1085045071d6ef8cfddc3ab49",
+              "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+              "timestampS": 1750967705,
+              "epoch": 1
+            },
+            "signatures": [
+              "0x0150bca1071eaa64d2373fadf01e964adbf59a4d41d92d451ab600cd553285346f3dec680ac5ff1cedaa51613cc489824a0c8ed8df0c5008048e5c5206853f731b"
+            ]
+          }
+        },
+        {
+          "claimInfo": {
+            "provider": "http",
+            "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+            "context": "{\"extractedParameters\":{\"price\":\"2438.14000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+          },
+          "signedClaim": {
+            "claim": {
+              "identifier": "0x42f145a8b61f5a9d1c3ea242b1a9238e2e9a8bcbb7db7ec666cfc47c421cfe4a",
+              "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+              "timestampS": 1750967710,
+              "epoch": 1
+            },
+            "signatures": [
+              "0xcfe5dd58860dfd5bb07d53f9489a18fe84e800b0005f0710bd1c69e89ccefe9c766c89b93ad3bcd25de50c48969bed2e36012a8381280f09bb818fc15b73ba881c"
+            ]
+          }
+        }
+      ],
+      "taskId": 4,
+      "value": "1000000000000000000"
+    },
+    "gasEstimate": null,
+    "network": "https://testnet-rpc.mechain.tech"
+  },
+  {
+    "taskId": "4",
+    "timestamp": "2025-07-11T08:34:26.262Z",
+    "method": "verifyProofs",
+    "contractAddress": "0x2ce4693Ea2a41941F0A798A62BC1eE9c3c31c820",
+    "params": {
+      "proofs": [
+        {
+          "claimInfo": {
+            "provider": "http",
+            "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+            "context": "{\"extractedParameters\":{\"price\":\"2437.93000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+          },
+          "signedClaim": {
+            "claim": {
+              "identifier": "0x7162a3f3af9d59b5c03ea8a06453ebce84dc4fd1085045071d6ef8cfddc3ab49",
+              "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+              "timestampS": 1750967705,
+              "epoch": 1
+            },
+            "signatures": [
+              "0x0150bca1071eaa64d2373fadf01e964adbf59a4d41d92d451ab600cd553285346f3dec680ac5ff1cedaa51613cc489824a0c8ed8df0c5008048e5c5206853f731b"
+            ]
+          }
+        },
+        {
+          "claimInfo": {
+            "provider": "http",
+            "parameters": "{\"method\":\"GET\",\"responseMatches\":[{\"type\":\"regex\",\"value\":\"\\\\{\\\"symbol\\\":\\\"ETHUSDT\\\",\\\"price\\\":\\\"(?<price>[\\\\d\\\\.]+)\\\"\\\\}\"}],\"responseRedactions\":[],\"url\":\"https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT\"}",
+            "context": "{\"extractedParameters\":{\"price\":\"2438.14000000\"},\"providerHash\":\"0xffd08bf872011e09ab78ce24057cbf65793b35d44f065b4c6ac51de0ebdbea58\"}"
+          },
+          "signedClaim": {
+            "claim": {
+              "identifier": "0x42f145a8b61f5a9d1c3ea242b1a9238e2e9a8bcbb7db7ec666cfc47c421cfe4a",
+              "owner": "0xe44973079dfa1e56f6a5de82c167f7e6fd610cc5",
+              "timestampS": 1750967710,
+              "epoch": 1
+            },
+            "signatures": [
+              "0xcfe5dd58860dfd5bb07d53f9489a18fe84e800b0005f0710bd1c69e89ccefe9c766c89b93ad3bcd25de50c48969bed2e36012a8381280f09bb818fc15b73ba881c"
+            ]
+          }
+        }
+      ],
+      "taskId": 4,
+      "value": "1000000000000000000"
+    },
+    "gasEstimate": "299149",
+    "network": "https://devnet-rpc.mocachain.org"
   }
 ]

@@ -8,5 +8,55 @@
     "gasUsed": "279249",
     "blockNumber": 5545274,
     "error": null
+  },
+  {
+    "taskId": "4",
+    "timestamp": "2025-06-29T14:50:38.654Z",
+    "success": true,
+    "transactionHash": "0xf3e8b028a0a39ce912b94ff257b105aad115f39ed0a39feee80b6f398ba0abd9",
+    "consensusReached": false,
+    "gasUsed": "299149",
+    "blockNumber": 5780839,
+    "error": null
+  },
+  {
+    "taskId": "4",
+    "timestamp": "2025-07-11T07:39:49.828Z",
+    "success": false,
+    "transactionHash": null,
+    "consensusReached": false,
+    "gasUsed": null,
+    "blockNumber": null,
+    "error": "read ECONNRESET"
+  },
+  {
+    "taskId": "4",
+    "timestamp": "2025-07-11T08:21:13.595Z",
+    "success": false,
+    "transactionHash": null,
+    "consensusReached": false,
+    "gasUsed": null,
+    "blockNumber": null,
+    "error": "read ECONNRESET"
+  },
+  {
+    "taskId": "4",
+    "timestamp": "2025-07-11T08:25:10.195Z",
+    "success": false,
+    "transactionHash": null,
+    "consensusReached": false,
+    "gasUsed": null,
+    "blockNumber": null,
+    "error": "read ECONNRESET"
+  },
+  {
+    "taskId": "4",
+    "timestamp": "2025-07-11T08:34:33.211Z",
+    "success": true,
+    "transactionHash": "0xef7cbde1bce28fcec5df526d1e5f6e09234b808a970826680638b4d5fee47f54",
+    "consensusReached": false,
+    "gasUsed": "299149",
+    "blockNumber": 6771158,
+    "error": null
   }
 ]

@@ -6,7 +6,7 @@ const path = require('path');
 const CONFIG = {
   reclaimTaskAddress: '0x2ce4693Ea2a41941F0A798A62BC1eE9c3c31c820',
   governanceAddress: '0x0d113bDe369DC8Df8e24760473bB3C4965a17078',
-  networkURL: 'https://testnet-rpc.mechain.tech',
+  networkURL: 'https://devnet-rpc.mocachain.org',
   privateKey: 'd716026fb6fce2b47a911ef44d36d7e07fd6b09037c0b3d7121f20061388cba6'
 };
 

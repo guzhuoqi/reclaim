@@ -6,7 +6,7 @@ const path = require('path');
 const CONFIG = {
   reclaimTaskAddress: '0x2ce4693Ea2a41941F0A798A62BC1eE9c3c31c820',
   governanceAddress: '0x0d113bDe369DC8Df8e24760473bB3C4965a17078',
-  networkURL: 'https://testnet-rpc.mechain.tech',
+  networkURL: 'https://devnet-rpc.mocachain.org',
   privateKey: 'd716026fb6fce2b47a911ef44d36d7e07fd6b09037c0b3d7121f20061388cba6'
 };
 
@@ -39,11 +39,11 @@ function ensureDataDir() {
 // 读取attestor生成的proofs
 function getAttestorProofs() {
   const proofsPath = path.join(__dirname, '../attestor-calls/data/proofs-for-verification.json');
-  
+
   if (!fs.existsSync(proofsPath)) {
     throw new Error('未找到attestor proofs文件，请先运行attestor调用脚本');
   }
-  
+
   try {
     const proofsData = JSON.parse(fs.readFileSync(proofsPath, 'utf8'));
     return proofsData;
@@ -55,23 +55,23 @@ function getAttestorProofs() {
 // 将attestor返回的数据转换为合约需要的Proof结构
 function convertToContractProofs(attestorProofs) {
   console.log('🔄 正在转换Proof数据格式...');
-  
+
   const contractProofs = [];
-  
+
   for (let i = 0; i < attestorProofs.proofs.length; i++) {
     const attestorProof = attestorProofs.proofs[i];
-    
+
     console.log(`📋 处理Proof ${i + 1}:`);
     console.log(`   Attestor: ${attestorProof.attestorHost}`);
     console.log(`   Claim ID: ${attestorProof.claim.identifier.substring(0, 20)}...`);
-    
+
     // 构建ClaimInfo结构
     const claimInfo = {
       provider: attestorProof.claim.provider,
       parameters: attestorProof.claim.parameters,
       context: attestorProof.claim.context || ''
     };
-    
+
     // 构建SignedClaim结构
     const signedClaim = {
       claim: {
@@ -87,17 +87,17 @@ function convertToContractProofs(attestorProofs) {
           : '0x' + Buffer.from(attestorProof.signatures.claimSignature.data || attestorProof.signatures.claimSignature).toString('hex')
       ].filter(sig => sig && sig !== '0x') // 只使用claimSignature
     };
-    
+
     // 构建完整的Proof结构
     const contractProof = {
       claimInfo: claimInfo,
       signedClaim: signedClaim
     };
-    
+
     contractProofs.push(contractProof);
     console.log(`   ✅ Proof ${i + 1} 转换完成`);
   }
-  
+
   console.log(`✅ 总共转换了 ${contractProofs.length} 个Proofs\n`);
   return contractProofs;
 }
@@ -106,16 +106,16 @@ function convertToContractProofs(attestorProofs) {
 async function getVerificationCost(provider) {
   try {
     console.log('💰 正在获取验证费用...');
-    
+
     const governanceContract = new ethers.Contract(
       CONFIG.governanceAddress,
       GOVERNANCE_ABI,
       provider
     );
-    
+
     const cost = await governanceContract.verificationCost();
     console.log(`✅ 验证费用: ${ethers.formatEther(cost)} ETH\n`);
-    
+
     return cost;
   } catch (error) {
     console.error('❌ 获取验证费用失败:', error.message);
@@ -220,29 +220,29 @@ function saveVerificationResult(taskId, txHash, consensusReached, gasUsed, block
 async function verifyProofs(taskId = null) {
   try {
     console.log('🚀 开始验证Proofs...\n');
-    
+
     // 创建provider和wallet
     const provider = new ethers.JsonRpcProvider(CONFIG.networkURL);
     const wallet = new ethers.Wallet(CONFIG.privateKey, provider);
-    
+
     // 连接到合约
     const contract = new ethers.Contract(CONFIG.reclaimTaskAddress, RECLAIM_TASK_ABI, wallet);
-    
+
     console.log(`📋 ReclaimTask 合约地址: ${CONFIG.reclaimTaskAddress}`);
     console.log(`🌐 网络: ${CONFIG.networkURL}`);
     console.log(`👤 发送地址: ${wallet.address}\n`);
-    
+
     // 读取attestor生成的proofs
     console.log('📁 正在读取Attestor生成的Proofs...');
     const attestorProofs = getAttestorProofs();
-    
+
     console.log(`✅ 读取成功! 任务ID: ${attestorProofs.taskId}`);
     console.log(`📊 找到 ${attestorProofs.proofs.length} 个Proofs\n`);
-    
+
     // 确定要验证的任务ID
     const targetTaskId = taskId || parseInt(attestorProofs.taskId);
     console.log(`🎯 目标任务ID: ${targetTaskId}\n`);
-    
+
     // 检查任务是否已经被验证
     console.log('🔍 检查任务状态...');
     const alreadyProcessed = await contract.consensusReached(targetTaskId);
@@ -250,20 +250,20 @@ async function verifyProofs(taskId = null) {
       throw new Error(`任务 ${targetTaskId} 已经被验证过了`);
     }
     console.log('✅ 任务尚未被验证，可以继续\n');
-    
+
     // 转换proof格式
     const contractProofs = convertToContractProofs(attestorProofs);
-    
+
     // 获取验证费用
     const verificationCost = await getVerificationCost(provider);
-    
+
     // 显示即将发送的数据
     console.log('📋 验证参数:');
     console.log(`   任务ID: ${targetTaskId}`);
     console.log(`   Proofs数量: ${contractProofs.length}`);
     console.log(`   验证费用: ${ethers.formatEther(verificationCost)} ETH`);
     console.log('');
-    
+
     // 显示每个proof的详细信息
     console.log('👥 Proofs详情:');
     contractProofs.forEach((proof, index) => {
@@ -274,7 +274,7 @@ async function verifyProofs(taskId = null) {
       console.log(`   Signatures: ${proof.signedClaim.signatures.length}`);
       console.log('');
     });
-    
+
     // 保存验证入参
     console.log('💾 正在保存验证入参...');
     const inputData = saveInputParams(targetTaskId, contractProofs, verificationCost);
@@ -297,19 +297,19 @@ async function verifyProofs(taskId = null) {
     const rpcData = saveRpcRequest(targetTaskId, contractProofs, verificationCost, gasEstimate);
     console.log(`✅ RPC请求已保存到: ${RPC_REQUESTS_FILE}`);
     console.log('');
-    
+
     // 调用verifyProofs方法
     console.log('='.repeat(60));
     console.log('🔐 正在调用 verifyProofs 方法...');
     console.log('='.repeat(60));
-    
+
     const tx = await contract.verifyProofs(contractProofs, targetTaskId, {
       value: verificationCost
     });
-    
+
     console.log(`📝 交易哈希: ${tx.hash}`);
     console.log('⏳ 等待交易确认...');
-    
+
     const receipt = await tx.wait();
     console.log(`✅ 交易已确认! Gas使用量: ${receipt.gasUsed.toString()}\n`);
 
@@ -341,16 +341,16 @@ async function verifyProofs(taskId = null) {
     console.log(`   入参文件: ${INPUT_PARAMS_FILE}`);
     console.log(`   RPC请求: ${RPC_REQUESTS_FILE}`);
     console.log(`   验证结果: ${VERIFICATION_RESULTS_FILE}\n`);
-    
+
     console.log('='.repeat(60));
     console.log('✅ 验证流程完成!');
     console.log('='.repeat(60));
 
     return resultData;
-    
+
   } catch (error) {
     console.error('❌ 验证Proofs时发生错误:', error.message);
-    
+
     // 保存错误信息
     try {
       const attestorProofs = getAttestorProofs();
@@ -372,7 +372,7 @@ async function verifyProofs(taskId = null) {
     } catch (saveError) {
       console.error('保存错误信息失败:', saveError.message);
     }
-    
+
     throw error;
   }
 }
@@ -381,7 +381,7 @@ async function verifyProofs(taskId = null) {
 if (require.main === module) {
   const args = process.argv.slice(2);
   const taskId = args[0] ? parseInt(args[0]) : null;
-  
+
   verifyProofs(taskId).catch(console.error);
 }
 
