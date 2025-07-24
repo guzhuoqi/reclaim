@@ -1,0 +1,17 @@
+{
+  "name": "frontend-attestor-example",
+  "version": "1.0.0",
+  "description": "前端调用 Reclaim Attestor 获取 Claim 的示例",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@reclaimprotocol/attestor-core": "latest",
+    "ethers": "^6.0.0"
+  },
+  "keywords": ["reclaim", "attestor", "claim", "frontend"],
+  "author": "",
+  "license": "MIT"
+} 
