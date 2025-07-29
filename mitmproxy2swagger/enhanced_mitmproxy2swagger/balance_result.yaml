@@ -1,0 +1,264 @@
+openapi: 3.0.0
+info:
+  title: 
+    /Users/gu/IdeaProjects/reclaim/mitmproxy2swagger/testdata/flows_with_balance.mitm
+    Enhanced Mitmproxy2Swagger
+  version: 1.0.0
+  description: Enhanced with balance data extraction capabilities
+servers:
+- url: https://www.cmbwinglungbank.com/ibanking
+  description: The default server
+paths:
+  /WlbLogonServlet:
+    post:
+      summary: POST wlblogonservlet
+      responses:
+        '200':
+          description: OK
+          content: {}
+  /McpCSReqServlet:
+    get:
+      summary: GET mcpcsreqservlet
+      responses:
+        '200':
+          description: OK
+          content: {}
+      parameters:
+      - name: dse_operationName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_processorState
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_nextEventName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_pageId
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: jspName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_funcId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_operationName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_processorState
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_nextEventName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_pageId
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: mcp_timestamp
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: mcp_funcId
+        in: query
+        required: false
+        schema:
+          type: string
+    post:
+      summary: POST mcpcsreqservlet
+      responses:
+        '200':
+          description: 'OK (Contains balance data: HKD, USD, CNY)'
+          content:
+            text/plain:
+              schema:
+                type: object
+                properties:
+                  original_response:
+                    type: object
+                  extracted_balance_data:
+                    type: object
+                    properties:
+                      bank:
+                        type: string
+                      api_endpoint:
+                        type: string
+                      balances:
+                        type: object
+                        properties:
+                          HKD:
+                            type: array
+                            items:
+                              type: string
+                          USD:
+                            type: array
+                            items:
+                              type: string
+                          CNY:
+                            type: array
+                            items:
+                              type: string
+                      raw_amounts:
+                        type: array
+                        items:
+                          type: string
+                      metadata:
+                        type: object
+                        properties:
+                          extraction_method:
+                            type: string
+                          confidence:
+                            type: string
+                      all_detected_amounts:
+                        type: array
+                        items:
+                          type: string
+              example:
+                original_response:
+                extracted_balance_data:
+                  bank: cmb_wing_lung
+                  api_endpoint: 
+                    https://www.cmbwinglungbank.com/ibanking/McpCSReqServlet?dse_operationName=NbBkgActdetCoaProc2022&dse_processorState=initial&dse_nextEventName=start&dse_sessionId=BUERESGMDHBDEKDCCIHXIXFBFSEEEZHGAUHOBKAO&mcp_language=cn&dse_pageId=1&dse_parentContextName=&mcp_timestamp=1753473703934&AcctTypeIds=DDA,CUR,SAV,FDA,CON,MEC&AcctTypeId=CON&RequestType=D&selectedProductKey=CON
+                  balances:
+                    HKD:
+                    - 7,150.98
+                    USD:
+                    - '30.75'
+                    CNY:
+                    - '0.00'
+                  raw_amounts:
+                  - 7,150.98 HKD
+                  - 30.75 USD
+                  - 0.00 CNY
+                  metadata:
+                    extraction_method: regex_pattern_matching
+                    confidence: high
+                  all_detected_amounts:
+                  - 7,150.98
+                  - '0.00'
+                  - '30.75'
+              x-balance-examples:
+                account_balances:
+                  HKD: 7,150.98
+                  USD: '30.75'
+                  CNY: '0.00'
+                metadata:
+                  bank: cmb_wing_lung
+                  extraction_method: regex_pattern_matching
+                  confidence: high
+      parameters:
+      - name: dse_operationName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_processorState
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_nextEventName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_pageId
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: mcp_timestamp
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: AcctTypeIds
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: AcctTypeId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: RequestType
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: selectedProductKey
+        in: query
+        required: false
+        schema:
+          type: string
+x-path-templates:
+- ignore:/WlbLogonServlet
+- ignore:/McpCSReqServlet
+- ignore:/WlbLogonServlet
+- /McpCSReqServlet
+x-balance-extraction-info:
+  extracted_endpoints: 1
+  supported_banks:
+  - cmb_wing_lung
+  extraction_timestamp: '2025-01-25T18:00:00Z'

@@ -1,0 +1,23 @@
+# 招商永隆银行 Provider 依赖包
+# 基于验证过的技术栈
+
+# 核心HTTP请求库
+requests>=2.31.0
+
+# 类型提示支持 (Python 3.7+)
+typing>=3.7.4
+
+# 开发和测试依赖
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.10.0
+
+# 可选：日志和调试
+loguru>=0.7.0
+
+# 可选：数据验证
+pydantic>=2.0.0
+
+# 注意：mitmproxy相关依赖仅在开发分析阶段需要
+# 生产环境Provider不依赖mitmproxy
+# mitmproxy>=10.0.0  # 开发时使用 
