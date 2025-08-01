@@ -1,0 +1,888 @@
+openapi: 3.0.0
+info:
+  title: 
+    /Users/gu/IdeaProjects/reclaim/mitmproxy2swagger/testdata/flows_with_balance.mitm
+    Enhanced Mitmproxy2Swagger
+  version: 1.0.0
+  description: Enhanced with balance data extraction capabilities
+servers:
+- url: https://its.bochk.com
+  description: 中国银行香港 API Server
+- url: https://www.cmbwinglungbank.com
+  description: 招商永隆银行 API Server
+paths:
+  /acc.overview.do:
+    get:
+      summary: GET acc.overview.do
+      responses:
+        '200':
+          description: 'OK (Contains balance data: HKD, USD, TOTAL_HKD)'
+          content:
+            text/plain:
+              schema:
+                type: object
+                properties:
+                  original_response:
+                    type: object
+                  extracted_balance_data:
+                    type: object
+                    properties:
+                      bank:
+                        type: string
+                      api_endpoint:
+                        type: string
+                      balances:
+                        type: object
+                        properties:
+                          HKD:
+                            type: array
+                            items:
+                              type: string
+                          USD:
+                            type: array
+                            items:
+                              type: string
+                          TOTAL_HKD:
+                            type: array
+                            items:
+                              type: string
+                      raw_amounts:
+                        type: array
+                        items:
+                          type: string
+                      metadata:
+                        type: object
+                        properties:
+                          extraction_method:
+                            type: string
+                          confidence:
+                            type: string
+                      all_detected_amounts:
+                        type: array
+                        items:
+                          type: string
+              x-balance-examples:
+                account_balances:
+                  HKD: 13,392.83
+                  USD: '101.24'
+                  TOTAL_HKD: 14,185.11
+                metadata:
+                  bank: boc_hk
+                  extraction_method: regex_pattern_matching
+                  confidence: high
+              example:
+                original_response: {}
+                extracted_balance_data:
+                  bank: boc_hk
+                  api_endpoint: https://its.bochk.com/acc.overview.do
+                  balances:
+                    HKD:
+                    - 13,392.83
+                    USD:
+                    - '101.24'
+                    TOTAL_HKD:
+                    - 14,185.11
+                  raw_amounts:
+                  - 13,392.83 HKD
+                  - 101.24 USD
+                  - 14,185.11 TOTAL_HKD
+                  metadata:
+                    extraction_method: regex_pattern_matching
+                    confidence: high
+                  all_detected_amounts:
+                  - 13,392.83
+                  - '101.24'
+                  - 14,185.11
+                  - '4.01'
+  /ibanking/logon/NbHomLogonInp.jsp:
+    get:
+      summary: GET nbhomlogoninp.jsp
+      responses:
+        '200':
+          description: OK
+          content: {}
+      parameters:
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+  /ibanking/WlbLogonServlet:
+    post:
+      summary: POST wlblogonservlet
+      responses:
+        '200':
+          description: OK
+          content: {}
+  /ibanking/McpCSReqServlet:
+    post:
+      summary: POST mcpcsreqservlet
+      responses:
+        '200':
+          description: 'OK (Contains balance data: HKD, USD, CNY)'
+          content:
+            text/plain:
+              schema:
+                type: object
+                properties:
+                  original_response:
+                    type: object
+                  extracted_balance_data:
+                    type: object
+                    properties:
+                      bank:
+                        type: string
+                      api_endpoint:
+                        type: string
+                      balances:
+                        type: object
+                        properties:
+                          HKD:
+                            type: array
+                            items:
+                              type: string
+                          USD:
+                            type: array
+                            items:
+                              type: string
+                          CNY:
+                            type: array
+                            items:
+                              type: string
+                      raw_amounts:
+                        type: array
+                        items:
+                          type: string
+                      metadata:
+                        type: object
+                        properties:
+                          extraction_method:
+                            type: string
+                          confidence:
+                            type: string
+                      all_detected_amounts:
+                        type: array
+                        items:
+                          type: string
+              x-balance-examples:
+                account_balances:
+                  HKD: 7,151.78
+                  USD: '30.75'
+                  CNY: '0.00'
+                metadata:
+                  bank: cmb_wing_lung
+                  extraction_method: regex_pattern_matching
+                  confidence: high
+              example:
+                original_response: {}
+                extracted_balance_data:
+                  bank: cmb_wing_lung
+                  api_endpoint: 
+                    https://www.cmbwinglungbank.com/ibanking/McpCSReqServlet?dse_operationName=NbBkgActdetCoaProc2022&dse_processorState=initial&dse_nextEventName=start&dse_sessionId=CGAWIMIRJTCQEGJHJVGKGOFHAXBBEHEIHRJUFIFB&mcp_language=cn&dse_pageId=1&dse_parentContextName=&mcp_timestamp=1754038386662&AcctTypeIds=DDA,CUR,SAV,FDA,CON,MEC&AcctTypeId=CON&RequestType=D&selectedProductKey=CON
+                  balances:
+                    HKD:
+                    - 7,151.78
+                    USD:
+                    - '30.75'
+                    CNY:
+                    - '0.00'
+                  raw_amounts:
+                  - 7,151.78 HKD
+                  - 30.75 USD
+                  - 0.00 CNY
+                  metadata:
+                    extraction_method: regex_pattern_matching
+                    confidence: high
+                  all_detected_amounts:
+                  - '0.00'
+                  - '30.75'
+                  - 7,151.78
+      parameters:
+      - name: dse_operationName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_processorState
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_nextEventName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_pageId
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: mcp_timestamp
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: AcctTypeIds
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: AcctTypeId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: RequestType
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: selectedProductKey
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_operationName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_processorState
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_nextEventName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_pageId
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: mcp_timestamp
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: AcctTypeIds
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: AcctTypeId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: RequestType
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: selectedProductKey
+        in: query
+        required: false
+        schema:
+          type: string
+    get:
+      summary: GET mcpcsreqservlet
+      responses:
+        '200':
+          description: OK
+          content: {}
+      parameters:
+      - name: dse_operationName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_processorState
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_nextEventName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_pageId
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: jspName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_funcId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_operationName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_processorState
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_nextEventName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_pageId
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: mcp_timestamp
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: mcp_funcId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_operationName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_processorState
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_nextEventName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_pageId
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: jspName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_funcId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_operationName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_processorState
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_nextEventName
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: mcp_language
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: dse_pageId
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: mcp_timestamp
+        in: query
+        required: false
+        schema:
+          type: number
+      - name: mcp_funcId
+        in: query
+        required: false
+        schema:
+          type: string
+x-path-templates:
+- ignore:/lgn.default.do
+- ignore:/css/layout.css
+- ignore:/css/orange.css
+- ignore:/css/ocsCin.css
+- ignore:/css/c.css
+- ignore:/css/menu.css
+- ignore:/js/browser_detect.js
+- ignore:/js/IbsCommon.js
+- ignore:/js/general.js
+- ignore:/js/text_c.js
+- ignore:/js/calendarLoader.js
+- ignore:/js/IbsValidForm.js
+- ignore:/js/IbsDelay.js
+- ignore:/js/jquery-min.js
+- ignore:/js/jQuery.migrate.js
+- ignore:/js/LinkUiKit.js
+- ignore:/images/common/top/logo_boc.gif
+- ignore:/images/common/top/popup_lang_e.gif
+- ignore:/images/common/top/popup_lang_s.gif
+- ignore:/images/common/spacer.gif
+- ignore:/images/common/icon/print.jpg
+- ignore:/images/common/icon/help.jpg
+- ignore:/images/common/icon/link_btn_normal_C.png
+- ignore:/images/common/title_bkgd.gif
+- ignore:/images/common/btn/button_li_single.gif
+- ignore:/images/common/btn/button_arc_single.gif
+- ignore:/images/common/btn/button_li_large_ns.gif
+- ignore:/images/common/btn/button_arc_large_ns.gif
+- ignore:/exp.remindPass_done.do
+- ignore:/css/textAd.css
+- ignore:/js/IbsCbsCommon.js
+- ignore:/js/jquery.xdomainrequest.min.js
+- ignore:/js/IbsLgnDefaultPage.js
+- ignore:/css/linkui.css
+- ignore:/images/common/top/logo_boc_ifree.gif
+- ignore:/CQ/ibsbanner/TopBanner/mgmTop_C.jpg
+- ignore:/images/common/top/home_c.gif
+- ignore:/images/common/top/lang_e.gif
+- ignore:/images/common/top/lang_s.gif
+- ignore:/js/iframe_core_src.js
+- ignore:/js/iframe_mmenudom.js
+- ignore:/images/common/nav/nav1_corner.gif
+- ignore:/images/assistant/mailbox/email.jpg
+- ignore:/images/common/top/quicklink_c.gif
+- ignore:/images/common/top/logout_c.gif
+- ignore:/images/common/nav/nav1_bkgd.gif
+- ignore:/images/eJourney/ejy_icn.gif
+- ignore:/images/common/top/contactUs_c.gif
+- ignore:/images/common/icon/switch_off_menu.gif
+- ignore:/images/common/nav/nav1_l.gif
+- ignore:/js/iframe_menu_boc_c.js
+- ignore:/banner/rightButton.png
+- ignore:/login/images/depositProtectionSchemeMember.svg
+- ignore:/images/common/iframe/nav1_left_c.gif
+- ignore:/images/common/iframe/nav1_right_c.gif
+- ignore:/banner/DEFAULT_IBS_LARGE_CHT.GIF
+- ignore:/images/common/btn/button_li_single_iFree.gif
+- ignore:/images/common/btn/button_arc_single_iFree.gif
+- ignore:/images/iFree_default.jpg
+- ignore:/images/common/iframe/nav_arrow.gif
+- /acc.overview.do
+- ignore:/css/promote.css
+- ignore:/images/promote/red_backgroud.gif
+- ignore:/images/common/btn/button_tb_arc_ns.gif
+- ignore:/images/promote/red_croner_left.gif
+- ignore:/images/common/btn/button_tb_li_ns.gif
+- ignore:/images/common/icon/shortcut_add.gif
+- ignore:/images/promote/red_croner_right.gif
+- ignore:/images/common/nav/orange/nav2_bkgd.gif
+- ignore:/images/common/nav/orange/nav2_corner.gif
+- ignore:/images/common/nav/nav3_corner_right_on.gif
+- ignore:/images/common/nav/nav3_corner_left_on.gif
+- ignore:/images/common/nav/nav3_corner_right.gif
+- ignore:/images/common/nav/nav3_corner_left.gif
+- ignore:/CnNbMainR.html
+- ignore:/js/globalVar.js
+- ignore:/js/Function.js
+- ignore:/js/ENwlbHandleError.js
+- ignore:/js/CNwlbHandleError.js
+- ignore:/js/SCwlbHandleError.js
+- ignore:/js/FieldValidator.js
+- ignore:/js/ErrDisplayWin.js
+- ignore:/js/typhoonInd.js
+- ignore:/js/typhoonList.js
+- ignore:/js/ControlCenter.js
+- ignore:/ibanking/logon/NbHomLogonInp.jsp
+- ignore:/html/XxNbOthWBlank.html
+- ignore:/js/jquery-3.2.1.min.js
+- ignore:/js/common/correctpng.js
+- ignore:/js/common/wlbJs.js
+- ignore:/js/resize.js
+- ignore:/js/log/McpAsciiToEbcdic.js
+- ignore:/js/log/McpMDEncryption.js
+- ignore:/js/log/McpMD5Encryption.js
+- ignore:/js/log/McpPasswordEncryptionR.js
+- ignore:/js/log/McpPassword.js
+- ignore:/js/log/McpPasswordHashingR.js
+- ignore:/js/log/McpPasswordTQTR.js
+- ignore:/js/log/McpPasswordTSTT.js
+- ignore:/js/log/McpHexUtil.js
+- ignore:/js/log/OperationMode.js
+- ignore:/js/log/OperationModeCBC.js
+- ignore:/js/log/DESCore1KeyBlockCipher.js
+- ignore:/js/log/McpHSMEncodeEnginee.js
+- ignore:/js/log/security.js
+- ignore:/js/DimmingDiv.js
+- ignore:/js/swiper.min.js
+- ignore:/js/E2EE/jsbn.js
+- ignore:/js/E2EE/tripledes.js
+- ignore:/js/E2EE/mode-ecb.js
+- ignore:/js/E2EE/pad-zeropadding-min.js
+- ignore:/js/E2EE/WPCommon.js
+- ignore:/js/E2EE/sjcl.js
+- ignore:/js/E2EE/E2EE.js
+- ignore:/js/E2EE/ErrorCheck.js
+- ignore:/js/E2EE/pad-nopadding.js
+- ignore:/js/E2EE10K/WPRSA.js
+- ignore:/js/E2EE10K/crypto-4.0.0.js
+- ignore:/js/E2EE10K/WPCommon.js
+- ignore:/js/E2EE10K/WPConstant.js
+- ignore:/js/E2EE10K/WPErrorID.js
+- ignore:/js/E2EE10K/sjcl.js
+- ignore:/js/E2EE10K/WPE2EE.js
+- ignore:/js/E2EE10K/ErrorCheck.js
+- ignore:/images/Bg_img3.jpg
+- ignore:/images/common/logo/wlbLogo.png
+- ignore:/images/pnbcorp/cnNbLogonpageTopBanner.jpg
+- ignore:/images/DPS.png
+- ignore:/images/pnbcorp/cngreentit_netbankinglogin.jpg
+- ignore:/images/problem_web.png
+- ignore:/images/common/cssStyle/background/Bg_main_Left_leftsidebar.jpg
+- ignore:/images/common/cssStyle/background/Bg_Main_Left_Iitle.jpg
+- ignore:/images/common/cssStyle/icon/ico_leftSidebarMuneList.gif
+- ignore:/images/common/cssStyle/background/Bg_Header.jpg
+- ignore:/images/common/cssStyle/button/btnDelSmall.jpg
+- ignore:/images/common/cssStyle/background/Bg_High.jpg
+- ignore:/images/common/cssStyle/background/Bg_main_Left_leftContent.jpg
+- ignore:/images/common/cssStyle/button/btnAddSmall.jpg
+- ignore:/images/common/cssStyle/background/Bg_AllBg.jpg
+- ignore:/images/voice_captcha.png
+- ignore:/images/common/cssStyle/background/Bg_Main_Left_Bottom.jpg
+- ignore:/images/cn_rebBtnHover.jpg
+- ignore:/images/xx_tableTopBg.jpg
+- ignore:/images/xx_login_tablemidlinebg.jpg
+- ignore:/images/xx_tableBottomBg.jpg
+- ignore:/images/common/cssStyle/button/btn_Redsubmit.jpg
+- ignore:/ibanking/Kaptcha.jpg
+- ignore:/images/common/cssStyle/icon/ico_leftSidebarMuneListhover.gif
+- ignore:/images/common/cssStyle/button/btn_Redsubmithover.jpg
+- ignore:/ibanking/WlbLogonServlet
+- ignore:/js/common/jquery-1.4.2.js
+- ignore:/images/cnNbLogonpageTopBanner.jpg
+- ignore:/images/cngreentit_netbankinglogin.jpg
+- /ibanking/McpCSReqServlet
+- ignore:/images/cnLeftSideBarBotImg.jpg
+- ignore:/images/FixDep.jpg
+- ignore:/images/FoxChg.jpg
+- ignore:/images/SecOpn.jpg
+- ignore:/images/WelOpn.jpg
+- ignore:/images/IPO-icon.jpg
+- ignore:/images/banner/CnLogonBanner.png
+- ignore:/images/greentab.jpg
+- ignore:/html/CnEnrollRewardPopwindow.html
+- ignore:/html/CnEnrolledRewardPopwin.html
+- ignore:/html/CnEnrollRewardAgreePopwindow.html
+- ignore:/images/common/icon/icoHome.gif
+- ignore:/images/common/icon/icoSpecification.png
+- ignore:/images/common/icon/icoPrint.png
+- ignore:/images/common/cssStyle/background/Bg_logout.gif
+- ignore:/enrollRewardstyle.css
+- ignore:/images/common/cssStyle/menu/Bg_mune.jpg
+- ignore:/style.css
+- ignore:/images/loginInfoPageTopTitleBg.jpg
+- ignore:/images/loginInfoPageNewsTitleBg.jpg
+- ignore:/images/img.jpg
+- ignore:/images/loginInfoMessageTopTrBg.jpg
+- ignore:/images/loginInfoPageNewsTitleBgLeft.jpg
+- ignore:/images/Cn_btn_Close_off_r.jpg
+- ignore:/images/gift_icon.jpg
+- ignore:/images/warning.gif
+- ignore:/images/Cn_btn_AgreeandJoin_off.jpg
+- ignore:/images/common/cssStyle/menu/Bg_muneHover.jpg
+- ignore:/images/common/pageImages/Cn_IPO.jpg
+- ignore:/images/common/pageImages/banner1.png
+- ignore:/images/common/icon/pic1.jpg
+- ignore:/images/common/icon/pic2.jpg
+- ignore:/images/common/icon/search.gif
+- ignore:/images/common/icon/servertime2.png
+- ignore:/images/common/cssStyle/background/Bg_Main_Left_Iitle2.jpg
+- ignore:/images/common/cssStyle/background/Bg_MainContentBannerRedLine.jpg
+- ignore:/js/common/datepicker/css/datepicker.css
+- ignore:/js/common/jquery.jScroll.js
+- ignore:/js/common/datepicker.js
+- ignore:/images/common/cssStyle/background/Bg_dataTableTop.jpg
+- ignore:/images/common/cssStyle/background/Bg_dataTableBottom.jpg
+- ignore:/js/ui.tools.js
+- ignore:/images/common/icon/icotblops.gif
+- ignore:/lgn.default.do
+- ignore:/css/layout.css
+- ignore:/css/orange.css
+- ignore:/css/ocsCin.css
+- ignore:/css/c.css
+- ignore:/css/menu.css
+- ignore:/js/browser_detect.js
+- ignore:/js/IbsCommon.js
+- ignore:/js/general.js
+- ignore:/js/text_c.js
+- ignore:/js/calendarLoader.js
+- ignore:/js/IbsValidForm.js
+- ignore:/js/IbsDelay.js
+- ignore:/js/jquery-min.js
+- ignore:/js/jQuery.migrate.js
+- ignore:/js/LinkUiKit.js
+- ignore:/images/common/top/logo_boc.gif
+- ignore:/images/common/top/popup_lang_e.gif
+- ignore:/images/common/top/popup_lang_s.gif
+- ignore:/images/common/spacer.gif
+- ignore:/images/common/icon/print.jpg
+- ignore:/images/common/icon/help.jpg
+- ignore:/images/common/icon/link_btn_normal_C.png
+- ignore:/images/common/title_bkgd.gif
+- ignore:/images/common/btn/button_li_single.gif
+- ignore:/images/common/btn/button_arc_single.gif
+- ignore:/images/common/btn/button_li_large_ns.gif
+- ignore:/images/common/btn/button_arc_large_ns.gif
+- ignore:/exp.remindPass_done.do
+- ignore:/css/textAd.css
+- ignore:/js/IbsCbsCommon.js
+- ignore:/js/jquery.xdomainrequest.min.js
+- ignore:/js/IbsLgnDefaultPage.js
+- ignore:/css/linkui.css
+- ignore:/images/common/top/logo_boc_ifree.gif
+- ignore:/CQ/ibsbanner/TopBanner/mgmTop_C.jpg
+- ignore:/images/common/top/home_c.gif
+- ignore:/images/common/top/lang_e.gif
+- ignore:/images/common/top/lang_s.gif
+- ignore:/js/iframe_core_src.js
+- ignore:/js/iframe_mmenudom.js
+- ignore:/images/common/nav/nav1_corner.gif
+- ignore:/images/assistant/mailbox/email.jpg
+- ignore:/images/common/top/quicklink_c.gif
+- ignore:/images/common/top/logout_c.gif
+- ignore:/images/common/nav/nav1_bkgd.gif
+- ignore:/images/eJourney/ejy_icn.gif
+- ignore:/images/common/top/contactUs_c.gif
+- ignore:/images/common/icon/switch_off_menu.gif
+- ignore:/images/common/nav/nav1_l.gif
+- ignore:/js/iframe_menu_boc_c.js
+- ignore:/banner/rightButton.png
+- ignore:/images/common/iframe/nav1_left_c.gif
+- ignore:/images/common/iframe/nav1_right_c.gif
+- ignore:/banner/DEFAULT_IBS_LARGE_CHT.GIF
+- ignore:/images/common/btn/button_li_single_iFree.gif
+- ignore:/images/common/btn/button_arc_single_iFree.gif
+- ignore:/images/iFree_default.jpg
+- ignore:/images/common/iframe/nav_arrow.gif
+- ignore:/css/promote.css
+- ignore:/images/promote/red_backgroud.gif
+- ignore:/images/common/btn/button_tb_arc_ns.gif
+- ignore:/images/promote/red_croner_left.gif
+- ignore:/images/common/btn/button_tb_li_ns.gif
+- ignore:/images/common/icon/shortcut_add.gif
+- ignore:/images/promote/red_croner_right.gif
+- ignore:/images/common/nav/orange/nav2_bkgd.gif
+- ignore:/images/common/nav/orange/nav2_corner.gif
+- ignore:/images/common/nav/nav3_corner_right_on.gif
+- ignore:/images/common/nav/nav3_corner_left_on.gif
+- ignore:/images/common/nav/nav3_corner_right.gif
+- ignore:/images/common/nav/nav3_corner_left.gif
+- ignore:/CnNbMainR.html
+- ignore:/js/globalVar.js
+- ignore:/js/Function.js
+- ignore:/js/ENwlbHandleError.js
+- ignore:/js/CNwlbHandleError.js
+- ignore:/js/SCwlbHandleError.js
+- ignore:/js/FieldValidator.js
+- ignore:/js/ErrDisplayWin.js
+- ignore:/js/typhoonInd.js
+- ignore:/js/typhoonList.js
+- ignore:/js/ControlCenter.js
+- ignore:/html/XxNbOthWBlank.html
+- ignore:/js/jquery-3.2.1.min.js
+- ignore:/js/common/correctpng.js
+- ignore:/js/common/wlbJs.js
+- ignore:/js/resize.js
+- ignore:/js/log/McpAsciiToEbcdic.js
+- ignore:/js/log/McpMDEncryption.js
+- ignore:/js/log/McpMD5Encryption.js
+- ignore:/js/log/McpPasswordEncryptionR.js
+- ignore:/js/log/McpPassword.js
+- ignore:/js/log/McpPasswordHashingR.js
+- ignore:/js/log/McpPasswordTQTR.js
+- ignore:/js/log/McpPasswordTSTT.js
+- ignore:/js/log/McpHexUtil.js
+- ignore:/js/log/OperationMode.js
+- ignore:/js/log/OperationModeCBC.js
+- ignore:/js/log/DESCore1KeyBlockCipher.js
+- ignore:/js/log/McpHSMEncodeEnginee.js
+- ignore:/js/log/security.js
+- ignore:/js/DimmingDiv.js
+- ignore:/js/swiper.min.js
+- ignore:/js/E2EE/jsbn.js
+- ignore:/js/E2EE/tripledes.js
+- ignore:/js/E2EE/mode-ecb.js
+- ignore:/js/E2EE/pad-zeropadding-min.js
+- ignore:/js/E2EE/WPCommon.js
+- ignore:/js/E2EE/sjcl.js
+- ignore:/js/E2EE/E2EE.js
+- ignore:/js/E2EE/ErrorCheck.js
+- ignore:/js/E2EE/pad-nopadding.js
+- ignore:/js/E2EE10K/WPRSA.js
+- ignore:/js/E2EE10K/crypto-4.0.0.js
+- ignore:/js/E2EE10K/WPCommon.js
+- ignore:/js/E2EE10K/WPConstant.js
+- ignore:/js/E2EE10K/WPErrorID.js
+- ignore:/js/E2EE10K/sjcl.js
+- ignore:/js/E2EE10K/WPE2EE.js
+- ignore:/js/E2EE10K/ErrorCheck.js
+- ignore:/images/Bg_img3.jpg
+- ignore:/images/common/logo/wlbLogo.png
+- ignore:/images/DPS.png
+- ignore:/images/problem_web.png
+- ignore:/images/common/cssStyle/background/Bg_main_Left_leftsidebar.jpg
+- ignore:/images/common/cssStyle/background/Bg_Main_Left_Iitle.jpg
+- ignore:/images/common/cssStyle/icon/ico_leftSidebarMuneList.gif
+- ignore:/images/common/cssStyle/background/Bg_Header.jpg
+- ignore:/images/common/cssStyle/button/btnDelSmall.jpg
+- ignore:/images/common/cssStyle/background/Bg_High.jpg
+- ignore:/images/common/cssStyle/background/Bg_main_Left_leftContent.jpg
+- ignore:/images/common/cssStyle/button/btnAddSmall.jpg
+- ignore:/images/common/cssStyle/background/Bg_AllBg.jpg
+- ignore:/images/voice_captcha.png
+- ignore:/images/common/cssStyle/background/Bg_Main_Left_Bottom.jpg
+- ignore:/images/cn_rebBtnHover.jpg
+- ignore:/images/xx_tableTopBg.jpg
+- ignore:/images/xx_tableBottomBg.jpg
+- ignore:/images/common/cssStyle/button/btn_Redsubmit.jpg
+- ignore:/ibanking/Kaptcha.jpg
+- ignore:/images/common/cssStyle/icon/ico_leftSidebarMuneListhover.gif
+- ignore:/images/common/cssStyle/button/btn_Redsubmithover.jpg
+- ignore:/js/common/jquery-1.4.2.js
+- ignore:/images/cnLeftSideBarBotImg.jpg
+- ignore:/images/FixDep.jpg
+- ignore:/images/FoxChg.jpg
+- ignore:/images/SecOpn.jpg
+- ignore:/images/WelOpn.jpg
+- ignore:/images/IPO-icon.jpg
+- ignore:/images/greentab.jpg
+- ignore:/html/CnEnrollRewardPopwindow.html
+- ignore:/html/CnEnrolledRewardPopwin.html
+- ignore:/html/CnEnrollRewardAgreePopwindow.html
+- ignore:/images/common/icon/icoHome.gif
+- ignore:/images/common/icon/icoSpecification.png
+- ignore:/images/common/icon/icoPrint.png
+- ignore:/images/common/cssStyle/background/Bg_logout.gif
+- ignore:/enrollRewardstyle.css
+- ignore:/images/common/cssStyle/menu/Bg_mune.jpg
+- ignore:/style.css
+- ignore:/images/img.jpg
+- ignore:/images/Cn_btn_Close_off_r.jpg
+- ignore:/images/gift_icon.jpg
+- ignore:/images/warning.gif
+- ignore:/images/Cn_btn_AgreeandJoin_off.jpg
+- ignore:/images/common/cssStyle/menu/Bg_muneHover.jpg
+- ignore:/images/common/pageImages/Cn_IPO.jpg
+- ignore:/images/common/pageImages/banner1.png
+- ignore:/images/common/icon/pic1.jpg
+- ignore:/images/common/icon/pic2.jpg
+- ignore:/images/common/icon/search.gif
+- ignore:/images/common/icon/servertime2.png
+- ignore:/images/common/cssStyle/background/Bg_Main_Left_Iitle2.jpg
+- ignore:/images/common/cssStyle/background/Bg_MainContentBannerRedLine.jpg
+- ignore:/js/common/datepicker/css/datepicker.css
+- ignore:/js/common/jquery.jScroll.js
+- ignore:/js/common/datepicker.js
+- ignore:/images/common/cssStyle/background/Bg_dataTableTop.jpg
+- ignore:/images/common/cssStyle/background/Bg_dataTableBottom.jpg
+- ignore:/js/ui.tools.js
+- ignore:/images/common/icon/icotblops.gif
+x-balance-extraction-info:
+  extracted_endpoints: 2
+  supported_banks:
+  - boc_hk
+  - cmb_wing_lung
+  extraction_timestamp: '2025-01-25T18:00:00Z'

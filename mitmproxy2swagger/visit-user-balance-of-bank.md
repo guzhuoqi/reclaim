@@ -5,9 +5,8 @@
 
 /Users/gu/Library/Python/3.9/bin/mitmweb --listen-port 8080 --web-port 8081 --set confdir=~/.mitmproxy
 
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --proxy-server=http://localhost:9999 --ignore-certificate-errors --user-data-dir=/tmp/chrome_dev_session &
 
-
-http://127.0.0.1:8081/#/flows
 
 curl -s "http://127.0.0.1:8081/#/flows/dump" > /Users/gu/IdeaProjects/reclaim/mitmproxy2swagger/testdata/futu.mitm
 
@@ -319,3 +318,61 @@ Host: www.cmbwinglungbank.com
 3. **验证层面**: 通过公私分离，既保证验证完整性又保护敏感数据
 
 **这是ZK-TLS协议的核心设计**：让用户能够证明"我确实从某个可信源获得了某个数据"，而不需要暴露"我是如何获得这个数据的具体细节"。
+
+
+---
+
+        "providerConfig": {
+            "loginUrl": "https://github.com/settings/profile",
+            "customInjection": "",
+            "userAgent": {
+                "ios": "",
+                "android": "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.6668.69 Mobile Safari/537.36"
+            },
+            "geoLocation": "",
+            "injectionType": "MSWJS",
+            "disableRequestReplay": false,
+            "verificationType": "WITNESS",
+            "requestData": [
+                {
+                    "url": "https://github.com/settings/profile",
+                    "expectedPageUrl": null,
+                    "urlType": "TEMPLATE",
+                    "method": "GET",
+                    "responseMatches": [
+                        {
+                            "value": "<span class=\"color-fg-muted\">({{username}})</span>",
+                            "type": "contains",
+                            "invert": false,
+                            "description": null,
+                            "order": null,
+                            "isOptional": false
+                        }
+                    ],
+                    "responseRedactions": [
+                        {
+                            "xPath": "",
+                            "jsonPath": "",
+                            "regex": "<span class=\"color-fg-muted\">\\((.*)\\)</span>",
+                            "hash": "",
+                            "order": null
+                        }
+                    ],
+                    "bodySniff": {
+                        "enabled": false,
+                        "template": ""
+                    },
+                    "requestHash": "0x9d413beed5ff5982df9460e8f4c3d118febd36839f5c9558980856a07369cca5",
+                    "responseVariables": [
+                        "username"
+                    ]
+                }
+            ],
+            "pageTitle": null,
+            "metadata": null,
+            "stepsToFollow": null,
+            "useIncognitoWebview": false
+        }
+这个providerConfig对象，是Reclaim协议的落地的系统中的、查询provider api应答的数据。你详细分析一下所有字段。
+
+---

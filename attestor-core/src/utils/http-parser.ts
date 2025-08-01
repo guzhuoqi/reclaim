@@ -73,8 +73,14 @@ export function makeHttpResponseParser() {
          * @param data the data to parse
          */
 		onChunk(data: Uint8Array) {
+			// 🏦 DEBUG: 精简的数据接收日志
+			if (data.length > 0) {
+				console.log(`📨 接收: ${data.length}字节`)
+			}
+			
 			// concatenate the remaining data from the last chunk
 			remaining = concatenateUint8Arrays([remaining, data])
+			
 			// if we don't have the headers yet, keep reading lines
 			// as each header is in a line
 			if(!res.headersComplete) {
@@ -169,6 +175,9 @@ export function makeHttpResponseParser() {
          * Checks that the response is valid & complete, otherwise throws an error
          */
 		streamEnded() {
+			// 🏦 DEBUG: 精简的流状态分析
+			console.log(`📥 流结束: headers=${res.headersComplete}, 数据=${remaining.length}字节, status=${res.statusCode || 'NONE'}`)
+			
 			if(!res.headersComplete) {
 				throw new Error('stream ended before headers were complete')
 			}

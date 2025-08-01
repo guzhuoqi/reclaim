@@ -52,6 +52,28 @@ class BankBalanceExtractor(DataExtractor):
                     ]
                 }
             },
+            # 中国银行香港
+            'boc_hk': {
+                'url_pattern': r'its\.bochk\.com.*acc\.overview\.do',
+                'currency_patterns': {
+                    'HKD': [
+                        # 基于实际HTML结构：<td class="data_table_swap1_txt data_table_lastcell" nowrap>13,392.83</td>
+                        r'data_table_swap1_txt[^>]*>(\d[\d,]*\.\d{2})</td>',
+                        # 港元标识后的金额
+                        r'港元\s*\(HKD\)</td>[\s\S]*?data_table_swap1_txt[^>]*>(\d[\d,]*\.\d{2})</td>',
+                    ],
+                    'USD': [
+                        # 基于实际HTML结构：<td class="data_table_swap2_txt data_table_lastcell" nowrap>101.24</td>
+                        r'data_table_swap2_txt[^>]*>(\d[\d,]*\.\d{2})</td>',
+                        # 美元标识后的金额
+                        r'美元\s*\(USD\)</td>[\s\S]*?data_table_swap2_txt[^>]*>(\d[\d,]*\.\d{2})</td>',
+                    ],
+                    'TOTAL_HKD': [
+                        # 总计金额：<td class="data_table_subtotal data_table_lastcell" >14,185.11</td>
+                        r'data_table_subtotal[^>]*>(\d[\d,]*\.\d{2})</td>',
+                    ]
+                }
+            },
             # 可扩展其他银行
             'hsbc_hk': {
                 'url_pattern': r'hsbc\.com\.hk.*balance',

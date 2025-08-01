@@ -48,7 +48,7 @@ def enhanced_main(override_args: Optional[Sequence[str]] = None):
         help="The output swagger schema file (yaml). If it exists, new endpoints will be added",
         required=True,
     )
-    parser.add_argument("-p", "--api-prefix", help="The api prefix", required=True)
+    parser.add_argument("-p", "--api-prefix", help="The api prefix (optional, will auto-detect if not provided)", required=False)
     parser.add_argument(
         "-e",
         "--examples",
@@ -112,6 +112,17 @@ def enhanced_main(override_args: Optional[Sequence[str]] = None):
     else:
         capture_reader = detect_input_format(args.input)
 
+    # 🎯 自动检测API前缀（如果未提供）
+    if not args.api_prefix:
+        api_prefixes = auto_detect_api_prefixes(capture_reader)
+        args.api_prefix = api_prefixes[0]  # 主要前缀用于兼容性
+        args.all_api_prefixes = api_prefixes  # 所有前缀用于多银行处理
+        print(f"🔍 自动检测到 {len(api_prefixes)} 个API前缀:")
+        for prefix in api_prefixes:
+            print(f"   - {prefix}")
+    else:
+        args.all_api_prefixes = [args.api_prefix]
+    
     # 加载或创建swagger规范  
     swagger = load_or_create_swagger_spec(args, yaml)
     
@@ -123,13 +134,25 @@ def enhanced_main(override_args: Optional[Sequence[str]] = None):
         balance_data_cache = {}  # 缓存提取的余额数据
         
         for req in capture_reader.captured_requests():
-            # 基础URL和路径处理
-            url = req.get_matching_url(args.api_prefix)
+            # 基础URL和路径处理 - 支持多个API前缀
+            url = None
+            path = None
+            current_api_prefix = None
+            
+            # 尝试匹配任何一个API前缀
+            for api_prefix in args.all_api_prefixes:
+                matched_url = req.get_matching_url(api_prefix)
+                if matched_url is not None:
+                    url = matched_url
+                    path = strip_query_string(url).removeprefix(api_prefix)
+                    current_api_prefix = api_prefix
+                    break
+            
+            # 如果没有匹配任何前缀，跳过
             if url is None:
                 continue
                 
             method = req.get_method().lower()
-            path = strip_query_string(url).removeprefix(args.api_prefix)
             status = req.get_response_status_code()
 
             # 路径模板匹配
@@ -199,12 +222,18 @@ def enhanced_main(override_args: Optional[Sequence[str]] = None):
                             # 添加余额相关的schema描述
                             resp_data_to_set['description'] += f" (Contains balance data: {', '.join(balance_data['balances'].keys())})"
                             
-                            # 如果启用了明文展示
-                            if args.balance_plaintext and args.examples:
+                            # 如果启用了明文展示，生成实际的余额示例数据
+                            if args.balance_plaintext:
                                 # ⚠️ 重要：传递实际提取的余额数据，不使用任何硬编码数据
                                 balance_examples = get_balance_examples_for_endpoint(url, balance_data)
                                 if balance_examples:
                                     resp_data_to_set['content'][content_type_to_use]['x-balance-examples'] = balance_examples
+                                    
+                                    # 同时生成标准的OpenAPI example字段
+                                    resp_data_to_set['content'][content_type_to_use]['example'] = {
+                                        'original_response': {},
+                                        'extracted_balance_data': balance_data
+                                    }
 
                     swagger["paths"][path_template_to_set][method]["responses"][str(status)] = resp_data_to_set
 
@@ -259,25 +288,105 @@ def create_response_spec(response_data, content_type, req, args, url):
     return resp_data_to_set
 
 
+def is_static_resource(path):
+    """检查路径是否是静态资源文件"""
+    static_extensions = [
+        '.css', '.js', '.gif', '.jpg', '.jpeg', '.png', '.ico', '.svg', 
+        '.woff', '.woff2', '.ttf', '.eot', '.map', '.html', '.htm', '.pdf'
+    ]
+    
+    static_paths = [
+        '/images/', '/css/', '/js/', '/fonts/', '/assets/', '/static/',
+        '/banner/', '/CQ/', '/login/images/'
+    ]
+    
+    path_lower = path.lower()
+    
+    # 检查文件扩展名
+    if any(path_lower.endswith(ext) for ext in static_extensions):
+        return True
+        
+    # 检查路径前缀
+    if any(static_path in path_lower for static_path in static_paths):
+        return True
+        
+    return False
+
+def is_potential_balance_api(path):
+    """检查路径是否可能是余额相关的API - 更严格的过滤"""
+    # 首先排除静态资源
+    if is_static_resource(path):
+        return False
+    
+    # 只保留最核心的余额相关关键词
+    balance_keywords = [
+        'acc.overview.do',  # 中国银行账户概览
+        'McpCSReqServlet',  # 招商永隆银行API
+        'NbBkgActdetCoaProc', # 招商永隆银行余额查询
+        'account', 'balance', 'overview', 'summary'
+    ]
+    
+    path_lower = path.lower()
+    return any(keyword in path_lower for keyword in balance_keywords)
+
 def save_enhanced_swagger(swagger, new_path_templates, args, yaml, balance_data_cache):
     """保存增强的swagger文件"""
     
     # 添加新发现的路径模板
     if new_path_templates:
-        # 🎯 修改：检查路径是否包含余额数据，如果包含则不加ignore前缀
+        # 🎯 修改：检查路径是否包含余额数据或是潜在的余额API
         processed_templates = []
         for path in new_path_templates:
             # 检查是否有URL包含此路径且在余额数据缓存中
             has_balance_data = any(path in url for url in balance_data_cache.keys())
-            if has_balance_data:
-                # 包含余额数据的路径不加ignore前缀，让其被正常处理
+            # 🚀 新增：即使没有检测到余额数据，也识别潜在的余额API
+            is_balance_api = is_potential_balance_api(path)
+            
+            if has_balance_data or is_balance_api:
+                # 包含余额数据或潜在余额API的路径不加ignore前缀
                 processed_templates.append(path)
-                print(f"✅ 余额API路径将被正常处理: {path}")
+                if has_balance_data:
+                    print(f"✅ 已检测余额数据的API路径: {path}")
+                else:
+                    print(f"🔍 潜在余额API路径（基于关键词识别）: {path}")
             else:
-                # 不包含余额数据的路径加ignore前缀
+                # 不相关的路径加ignore前缀（主要是静态资源）
                 processed_templates.append(f"ignore:{path}")
         
         swagger["x-path-templates"].extend(processed_templates)
+
+    # 🎯 清理paths：只保留包含余额数据的API端点和关键认证API
+    if 'paths' in swagger:
+        filtered_paths = {}
+        for path, path_data in swagger['paths'].items():
+            # 检查这个路径是否对应包含余额数据的URL
+            path_has_balance = False
+            for url in balance_data_cache.keys():
+                if path in url:
+                    path_has_balance = True
+                    break
+            
+            # 或者检查是否有响应描述包含余额数据信息
+            if not path_has_balance:
+                for method, method_data in path_data.items():
+                    if isinstance(method_data, dict) and 'responses' in method_data:
+                        for response_data in method_data['responses'].values():
+                            if isinstance(response_data, dict) and 'Contains balance data' in response_data.get('description', ''):
+                                path_has_balance = True
+                                break
+                    if path_has_balance:
+                        break
+            
+            # 保留包含余额数据的API或重要的认证API，但排除图片等静态资源
+            if path_has_balance:
+                # 有余额数据的API一定保留
+                filtered_paths[path] = path_data
+            elif any(keyword in path.lower() for keyword in ['logon', 'login']) and not is_static_resource(path):
+                # 认证API保留，但排除静态资源
+                filtered_paths[path] = path_data
+                
+        swagger['paths'] = filtered_paths
+        print(f"🎯 优化后保留了 {len(filtered_paths)} 个关键API端点（原{len(swagger.get('paths', {}))}个）")
 
     # 🎯 添加余额数据元信息
     if balance_data_cache:
@@ -289,10 +398,10 @@ def save_enhanced_swagger(swagger, new_path_templates, args, yaml, balance_data_
             "extraction_timestamp": "2025-01-25T18:00:00Z"
         }
 
-    # 保存文件
-    base_dir = os.getcwd()
-    relative_path = args.output
-    abs_path = os.path.join(base_dir, relative_path)
+    # 保存文件 - 固定输出文件名为 banks_balance_result.yaml
+    base_dir = os.path.dirname(args.output) if os.path.dirname(args.output) else os.getcwd()
+    filename = "banks_balance_result.yaml"
+    abs_path = os.path.join(base_dir, filename)
     with open(abs_path, "w") as f:
         yaml.dump(swagger, f)
 
@@ -336,9 +445,9 @@ def load_or_create_swagger_spec(args, yaml):
     """加载或创建swagger规范"""
     swagger = None
     try:
-        base_dir = os.getcwd()
-        relative_path = args.output
-        abs_path = os.path.join(base_dir, relative_path)
+        base_dir = os.path.dirname(args.output) if os.path.dirname(args.output) else os.getcwd()
+        filename = "banks_balance_result.yaml"
+        abs_path = os.path.join(base_dir, filename)
         with open(abs_path, "r") as f:
             swagger = yaml.load(f)
     except FileNotFoundError:
@@ -355,15 +464,36 @@ def load_or_create_swagger_spec(args, yaml):
         })
     
     # 初始化基础结构
-    args.api_prefix = args.api_prefix.rstrip("/")
+    if args.api_prefix:
+        args.api_prefix = args.api_prefix.rstrip("/")
+    else:
+        args.api_prefix = ""
     
     if "servers" not in swagger or swagger["servers"] is None:
         swagger["servers"] = []
     
-    if not any(server["url"] == args.api_prefix for server in swagger["servers"]):
-        swagger["servers"].append(
-            {"url": args.api_prefix, "description": "The default server"}
-        )
+    # 🎯 添加所有检测到的银行API服务器
+    if hasattr(args, 'all_api_prefixes'):
+        for api_prefix in args.all_api_prefixes:
+            if not any(server["url"] == api_prefix for server in swagger["servers"]):
+                # 根据域名判断银行类型
+                server_description = "API Server"
+                if 'bochk.com' in api_prefix:
+                    server_description = "中国银行香港 API Server"
+                elif 'cmbwinglungbank.com' in api_prefix:
+                    server_description = "招商永隆银行 API Server"
+                elif 'hsbc' in api_prefix.lower():
+                    server_description = "汇丰银行 API Server"
+                    
+                swagger["servers"].append(
+                    {"url": api_prefix, "description": server_description}
+                )
+    else:
+        # 兼容单个前缀的旧逻辑
+        if not any(server["url"] == args.api_prefix for server in swagger["servers"]):
+            swagger["servers"].append(
+                {"url": args.api_prefix, "description": "The default server"}
+            )
     
     if "paths" not in swagger or swagger["paths"] is None:
         swagger["paths"] = {}
@@ -434,6 +564,55 @@ def ensure_default_response(swagger, path_template, method, req):
             "description": "OK",
             "content": {},
         }
+
+def auto_detect_api_prefixes(capture_reader):
+    """自动检测所有银行API前缀"""
+    from urllib.parse import urlparse
+    import collections
+    
+    # 收集所有URL的基础部分
+    base_urls = collections.Counter()
+    bank_prefixes = []
+    
+    try:
+        # 临时遍历请求来检测URL模式
+        temp_requests = []
+        for req in capture_reader.captured_requests():
+            full_url = req.get_url()
+            if full_url:
+                parsed = urlparse(full_url)
+                # 构建基础URL (协议 + 域名)
+                base_url = f"{parsed.scheme}://{parsed.netloc}"
+                base_urls[base_url] += 1
+                temp_requests.append(req)
+                
+                # 限制检查数量以提高性能
+                if len(temp_requests) > 200:
+                    break
+        
+        if base_urls:
+            # 识别银行相关的域名
+            bank_keywords = ['bank', 'bochk', 'cmbwinglungbank', 'hsbc', 'dbs', 'financial']
+            
+            for base_url, count in base_urls.most_common():
+                domain = urlparse(base_url).netloc.lower()
+                if any(keyword in domain for keyword in bank_keywords):
+                    bank_prefixes.append(base_url)
+                    print(f"🏦 检测到银行API前缀: {base_url} ({count} 个请求)")
+            
+            if bank_prefixes:
+                return bank_prefixes
+            else:
+                # 如果没找到银行域名，返回最常见的前缀
+                most_common_base = base_urls.most_common(1)[0][0]
+                return [most_common_base]
+        else:
+            # 默认返回通用前缀
+            return ["https://api.example.com"]
+            
+    except Exception as e:
+        print(f"⚠️  API前缀自动检测失败: {e}")
+        return ["https://api.example.com"]
 
 def handle_flow_read_error(e, args, capture_reader):
     """处理流读取错误"""

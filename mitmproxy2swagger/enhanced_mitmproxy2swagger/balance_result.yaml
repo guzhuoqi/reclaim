@@ -8,6 +8,8 @@ info:
 servers:
 - url: https://www.cmbwinglungbank.com/ibanking
   description: The default server
+- url: https://www.cmbwinglungbank.com
+  description: The default server
 paths:
   /WlbLogonServlet:
     post:
