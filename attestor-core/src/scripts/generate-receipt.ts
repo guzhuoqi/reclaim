@@ -83,6 +83,17 @@ export async function main<T extends ProviderName>(
 	const transcriptStr = getTranscriptString(decTranscript)
 	console.log('receipt:\n', transcriptStr)
 
+	// 输出完整的claim对象JSON
+	console.log('\n🎯 完整的Claim对象JSON:')
+	console.log(JSON.stringify(receipt, null, 2))
+
+	// 保存claim对象到文件
+	const fs = require('fs')
+	const timestamp = Math.floor(Date.now() / 1000)
+	const claimFilename = `boc-claim-object-${timestamp}.json`
+	fs.writeFileSync(claimFilename, JSON.stringify(receipt, null, 2))
+	console.log(`\n💾 完整的Claim对象已保存到: ${claimFilename}`)
+
 	const client = getAttestorClientFromPool(attestorHostPort)
 	await client.terminateConnection()
 
