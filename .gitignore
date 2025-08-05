@@ -138,3 +138,44 @@ build/Release
 # Temporary folders
 tmp/
 temp/
+
+# Python specific
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mitmproxy2swagger specific
+*.mitm
+*.har
+mitmproxy2swagger/logs/
+mitmproxy2swagger/temp/
+mitmproxy2swagger/uploads/
+mitmproxy2swagger/main-flow/logs/
+mitmproxy2swagger/main-flow/temp/
+mitmproxy2swagger/main-flow/uploads/
+mitmproxy2swagger/main-flow/data/
+*.log
+
+# Generated analysis files
+*_analysis_*.json
+*_request_details_*.json
+balance_extraction_report.json
+
+# IDE specific for mitmproxy2swagger
+mitmproxy2swagger/.idea/
+
+# Temporary files
+xxx.json
+
+# External projects (downloaded from independent repositories)
+zkme-express/

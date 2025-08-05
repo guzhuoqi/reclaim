@@ -1,0 +1,7 @@
+{
+  "feature_library_plugin": {
+    "enabled": true,
+    "config_path": "../ai_analysis_features/financial_api_features.json",
+    "priority": 1
+  }
+}

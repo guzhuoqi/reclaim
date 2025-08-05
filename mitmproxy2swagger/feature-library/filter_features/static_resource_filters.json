@@ -1,0 +1,254 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "created_by": "AI分析引擎",
+    "creation_date": "2024-01-22",
+    "description": "静态资源过滤规则 - 用于识别和过滤无价值的静态资源API",
+    "purpose": "提高API价值识别的准确性，避免将CSS、JS、图片等静态资源误识别为有价值API"
+  },
+  
+  "static_resource_patterns": {
+    "css_files": {
+      "description": "CSS样式文件",
+      "patterns": [
+        "\\.css$",
+        "/css/.*\\.css",
+        "/styles/.*\\.css",
+        "/static/.*\\.css"
+      ],
+      "exclusion_weight": -10,
+      "examples": ["/css/promote.css", "/css/orange.css", "/css/menu.css"]
+    },
+    
+    "javascript_files": {
+      "description": "JavaScript脚本文件",
+      "patterns": [
+        "\\.js$",
+        "/js/.*\\.js",
+        "/scripts/.*\\.js",
+        "/static/.*\\.js",
+        "jquery.*\\.js$",
+        "bootstrap.*\\.js$"
+      ],
+      "exclusion_weight": -10,
+      "examples": ["/js/jquery-3.2.1.min.js", "/js/ControlCenter.js", "/js/globalVar.js"]
+    },
+    
+    "image_files": {
+      "description": "图片和图标文件",
+      "patterns": [
+        "\\.(jpg|jpeg|png|gif|ico|svg|webp)$",
+        "/images/.*\\.(jpg|jpeg|png|gif|ico|svg|webp)",
+        "/img/.*\\.(jpg|jpeg|png|gif|ico|svg|webp)",
+        "/icons?/.*\\.(jpg|jpeg|png|gif|ico|svg|webp)",
+        "/static/.*\\.(jpg|jpeg|png|gif|ico|svg|webp)"
+      ],
+      "exclusion_weight": -15,
+      "examples": ["/images/common/nav/nav1_corner.gif", "/images/common/icon/print.jpg"]
+    },
+    
+    "font_files": {
+      "description": "字体文件",
+      "patterns": [
+        "\\.(woff|woff2|ttf|eot|otf)$",
+        "/fonts?/.*\\.(woff|woff2|ttf|eot|otf)"
+      ],
+      "exclusion_weight": -10,
+      "examples": ["/fonts/arial.woff", "/font/icon.ttf"]
+    },
+    
+    "static_html_pages": {
+      "description": "静态HTML页面(非API端点)",
+      "patterns": [
+        "/html/.*\\.html$",
+        "/pages?/.*\\.html$",
+        "/static/.*\\.html$",
+        "Popup.*\\.html$",
+        "Blank\\.html$"
+      ],
+      "exclusion_weight": -8,
+      "examples": ["/html/CnEnrollRewardPopwindow.html", "/html/XxNbOthWBlank.html"]
+    },
+    
+    "media_files": {
+      "description": "多媒体文件",
+      "patterns": [
+        "\\.(mp4|avi|mov|wmv|flv|mp3|wav|ogg)$",
+        "/media/.*\\.(mp4|avi|mov|wmv|flv|mp3|wav|ogg)",
+        "/video/.*\\.(mp4|avi|mov|wmv|flv)",
+        "/audio/.*\\.(mp3|wav|ogg)"
+      ],
+      "exclusion_weight": -15,
+      "examples": ["/media/video.mp4", "/audio/sound.mp3"]
+    },
+    
+    "document_files": {
+      "description": "文档文件",
+      "patterns": [
+        "\\.(pdf|doc|docx|xls|xlsx|ppt|pptx)$",
+        "/docs?/.*\\.(pdf|doc|docx|xls|xlsx|ppt|pptx)",
+        "/documents?/.*\\.(pdf|doc|docx|xls|xlsx|ppt|pptx)"
+      ],
+      "exclusion_weight": -5,
+      "examples": ["/docs/manual.pdf", "/documents/report.xlsx"]
+    }
+  },
+  
+  "low_value_api_patterns": {
+    "health_checks": {
+      "description": "健康检查和状态监控端点",
+      "patterns": [
+        "/health$",
+        "/status$",
+        "/ping$",
+        "/alive$",
+        "/ready$",
+        "/metrics$"
+      ],
+      "exclusion_weight": -5,
+      "examples": ["/health", "/api/status", "/ping"]
+    },
+    
+    "generic_resources": {
+      "description": "通用资源端点",
+      "patterns": [
+        "/favicon\\.ico$",
+        "/robots\\.txt$",
+        "/sitemap\\.xml$",
+        "/manifest\\.json$",
+        "/service-worker\\.js$"
+      ],
+      "exclusion_weight": -8,
+      "examples": ["/favicon.ico", "/robots.txt", "/manifest.json"]
+    },
+    
+    "third_party_services": {
+      "description": "第三方服务API(通常非核心业务)",
+      "patterns": [
+        "google.*analytics",
+        "facebook\\.com",
+        "twitter\\.com",
+        "linkedin\\.com",
+        "googleapis\\.com",
+        "googleapis\\.cn",
+        "gstatic\\.com",
+        "doubleclick\\.net"
+      ],
+      "exclusion_weight": -3,
+      "examples": ["/v1/leaks:lookupSingle", "google-analytics.com/collect"]
+    }
+  },
+  
+  "high_value_api_indicators": {
+    "banking_core_apis": {
+      "description": "银行核心API端点",
+      "patterns": [
+        "account.*balance",
+        "acc\\.overview",
+        "transaction.*history",
+        "transfer",
+        "payment",
+        "deposit",
+        "withdraw",
+        "portfolio",
+        "investment"
+      ],
+      "bonus_weight": 20,
+      "examples": ["/acc.overview.do", "/account/balance", "/transaction/history"]
+    },
+    
+    "authentication_apis": {
+      "description": "认证相关API",
+      "patterns": [
+        "login",
+        "logon",
+        "authenticate",
+        "oauth",
+        "token",
+        "session"
+      ],
+      "bonus_weight": 15,
+      "examples": ["/ibanking/WlbLogonServlet", "/auth/login"]
+    },
+    
+    "servlet_endpoints": {
+      "description": "服务端点(通常是核心业务API)",
+      "patterns": [
+        "Servlet$",
+        "\\.do$",
+        "/api/",
+        "/service/"
+      ],
+      "bonus_weight": 10,
+      "examples": ["/ibanking/McpCSReqServlet", "/service/account.do"]
+    }
+  },
+  
+  "filtering_rules": {
+    "strict_exclusions": {
+      "description": "严格排除规则 - 这些模式匹配的API直接排除",
+      "patterns": [
+        "\\.(css|js|jpg|jpeg|png|gif|ico|svg|webp|woff|woff2|ttf|eot|otf|mp4|avi|mov|wmv|flv|mp3|wav|ogg|pdf|doc|docx|xls|xlsx|ppt|pptx)$",
+        "/favicon\\.ico$",
+        "/robots\\.txt$"
+      ],
+      "action": "exclude"
+    },
+    
+    "weighted_scoring": {
+      "description": "权重评分规则 - 根据匹配模式调整API价值评分",
+      "minimum_threshold_after_filtering": 15,
+      "high_value_threshold": 30
+    }
+  },
+  
+  "common_static_paths": [
+    "/css/",
+    "/js/", 
+    "/images/",
+    "/img/",
+    "/static/",
+    "/assets/",
+    "/public/",
+    "/resources/",
+    "/media/",
+    "/fonts/",
+    "/font/",
+    "/icons/",
+    "/icon/"
+  ],
+  
+  "banking_specific_exclusions": {
+    "ui_components": {
+      "description": "银行网站UI组件文件",
+      "patterns": [
+        "jquery.*\\.js$",
+        "bootstrap.*\\.(js|css)$",
+        "datepicker.*\\.(js|css)$",
+        "calendar.*\\.(js|css)$",
+        "swiper.*\\.(js|css)$",
+        "nav.*\\.(gif|jpg|png)$",
+        "logo.*\\.(gif|jpg|png)$",
+        "icon.*\\.(gif|jpg|png)$",
+        "button.*\\.(gif|jpg|png)$"
+      ],
+      "exclusion_weight": -12,
+      "examples": ["/js/jquery-3.2.1.min.js", "/js/datepicker.js", "/images/common/nav/nav1_corner.gif"]
+    },
+    
+    "encryption_libs": {
+      "description": "加密库文件(非核心业务API)",
+      "patterns": [
+        "E2EE.*\\.js$",
+        "encryption.*\\.js$",
+        "crypto.*\\.js$",
+        "security.*\\.js$",
+        "MD5.*\\.js$",
+        "DES.*\\.js$",
+        "AES.*\\.js$"
+      ],
+      "exclusion_weight": -8,
+      "examples": ["/js/E2EE/E2EE.js", "/js/log/McpMD5Encryption.js"]
+    }
+  }
+}

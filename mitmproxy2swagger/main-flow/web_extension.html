@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reclaim Provider 生成器</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .header h1 {
+            color: #333;
+            margin: 0;
+            font-size: 28px;
+        }
+        
+        .header p {
+            color: #666;
+            margin: 10px 0 0 0;
+            font-size: 16px;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+            min-width: 120px;
+        }
+        
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+        
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+        
+        .btn-success {
+            background-color: #28a745;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background-color: #1e7e34;
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .status-panel {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .status-idle { background-color: #e9ecef; color: #495057; }
+        .status-running { background-color: #fff3cd; color: #856404; }
+        .status-completed { background-color: #d4edda; color: #155724; }
+        .status-error { background-color: #f8d7da; color: #721c24; }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.3s ease;
+            border-radius: 10px;
+        }
+        
+        .providers-section {
+            margin-top: 25px;
+        }
+        
+        .provider-card {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 10px;
+        }
+        
+        .provider-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .provider-name {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .provider-info {
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .log-area {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+        }
+        
+        .log-time {
+            color: #6c757d;
+            margin-right: 8px;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 8px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .alert {
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏦 Reclaim Provider 生成器</h1>
+            <p>从mitmproxy流量数据自动生成银行Provider配置</p>
+        </div>
+        
+        <div class="controls">
+            <button id="triggerBtn" class="btn btn-primary">
+                🚀 触发主流程
+                <span id="loadingSpinner" class="loading" style="display: none;"></span>
+            </button>
+            <button id="statusBtn" class="btn btn-secondary">📊 查询状态</button>
+            <button id="providersBtn" class="btn btn-success">📋 查看Providers</button>
+            <button id="resetBtn" class="btn btn-secondary">🔄 重置状态</button>
+        </div>
+        
+        <div id="alertArea"></div>
+        
+        <div class="status-panel">
+            <div class="status-header">
+                <h3>执行状态</h3>
+                <span id="statusBadge" class="status-badge status-idle">IDLE</span>
+            </div>
+            
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+            </div>
+            
+            <div id="statusMessage">等待触发...</div>
+            <div id="statusDetails" style="margin-top: 10px; font-size: 14px; color: #666;"></div>
+        </div>
+        
+        <div class="providers-section">
+            <h3>Provider配置列表</h3>
+            <div id="providersContainer">
+                <p style="color: #666; text-align: center;">暂无Provider配置</p>
+            </div>
+        </div>
+        
+        <div class="log-area">
+            <div><strong>操作日志</strong></div>
+            <div id="logContainer">
+                <div class="log-entry">
+                    <span class="log-time">[${new Date().toLocaleTimeString()}]</span>
+                    系统初始化完成
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API配置
+        const API_BASE = 'http://10.10.10.146:8082/reclaim-provider';
+        
+        // DOM元素
+        const triggerBtn = document.getElementById('triggerBtn');
+        const statusBtn = document.getElementById('statusBtn');
+        const providersBtn = document.getElementById('providersBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const loadingSpinner = document.getElementById('loadingSpinner');
+        const statusBadge = document.getElementById('statusBadge');
+        const progressFill = document.getElementById('progressFill');
+        const statusMessage = document.getElementById('statusMessage');
+        const statusDetails = document.getElementById('statusDetails');
+        const providersContainer = document.getElementById('providersContainer');
+        const logContainer = document.getElementById('logContainer');
+        const alertArea = document.getElementById('alertArea');
+        
+        // 状态轮询定时器
+        let statusPolling = null;
+        
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 绑定事件
+            triggerBtn.addEventListener('click', triggerPipeline);
+            statusBtn.addEventListener('click', checkStatus);
+            providersBtn.addEventListener('click', loadProviders);
+            resetBtn.addEventListener('click', resetStatus);
+            
+            // 初始状态检查
+            checkStatus();
+            loadProviders();
+            
+            addLog('页面加载完成，可以开始使用');
+        });
+        
+        // 触发主流程
+        async function triggerPipeline() {
+            try {
+                showLoading(true);
+                addLog('正在触发主流程...');
+                
+                const response = await fetch(`${API_BASE}/trigger`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showAlert('主流程已启动！', 'success');
+                    addLog('✅ 主流程启动成功');
+                    startStatusPolling();
+                } else {
+                    showAlert(`启动失败: ${result.message}`, 'error');
+                    addLog(`❌ 启动失败: ${result.message}`);
+                }
+                
+            } catch (error) {
+                showAlert(`请求失败: ${error.message}`, 'error');
+                addLog(`❌ 请求失败: ${error.message}`);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        // 查询状态
+        async function checkStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/status`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    updateStatus(result.data);
+                } else {
+                    addLog(`状态查询失败: ${result.message}`);
+                }
+                
+            } catch (error) {
+                addLog(`状态查询请求失败: ${error.message}`);
+            }
+        }
+        
+        // 加载Providers
+        async function loadProviders() {
+            try {
+                const response = await fetch(`${API_BASE}/providers`);
+                const result = await response.json();
+                
+                if (result.success && result.data.providers) {
+                    displayProviders(result.data);
+                    addLog(`📋 加载了 ${result.data.providers.length} 个Provider配置`);
+                } else {
+                    providersContainer.innerHTML = '<p style="color: #666; text-align: center;">暂无Provider配置</p>';
+                    if (!result.success) {
+                        addLog(`Provider加载失败: ${result.message}`);
+                    }
+                }
+                
+            } catch (error) {
+                addLog(`Provider加载请求失败: ${error.message}`);
+                providersContainer.innerHTML = '<p style="color: #dc3545; text-align: center;">加载失败</p>';
+            }
+        }
+        
+        // 重置状态
+        async function resetStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/reset`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showAlert('状态已重置', 'success');
+                    addLog('🔄 状态重置成功');
+                    updateStatus(result.data);
+                    stopStatusPolling();
+                } else {
+                    showAlert(`重置失败: ${result.message}`, 'error');
+                }
+                
+            } catch (error) {
+                showAlert(`重置请求失败: ${error.message}`, 'error');
+            }
+        }
+        
+        // 更新状态显示
+        function updateStatus(status) {
+            // 更新状态徽章
+            statusBadge.className = `status-badge status-${status.status}`;
+            statusBadge.textContent = status.status.toUpperCase();
+            
+            // 更新进度条
+            progressFill.style.width = `${status.progress}%`;
+            
+            // 更新状态消息
+            statusMessage.textContent = status.message || '无消息';
+            
+            // 更新详细信息
+            let details = [];
+            if (status.start_time) {
+                details.push(`开始时间: ${new Date(status.start_time).toLocaleString()}`);
+            }
+            if (status.end_time) {
+                details.push(`结束时间: ${new Date(status.end_time).toLocaleString()}`);
+            }
+            if (status.providers_count > 0) {
+                details.push(`Provider数量: ${status.providers_count}`);
+            }
+            if (status.errors && status.errors.length > 0) {
+                details.push(`错误: ${status.errors.join(', ')}`);
+            }
+            
+            statusDetails.textContent = details.join(' | ');
+            
+            // 根据状态控制按钮
+            const isRunning = status.status === 'running';
+            triggerBtn.disabled = isRunning;
+            
+            if (status.status === 'completed') {
+                loadProviders(); // 自动刷新Provider列表
+                stopStatusPolling();
+            }
+        }
+        
+        // 显示Providers
+        function displayProviders(data) {
+            if (!data.providers || data.providers.length === 0) {
+                providersContainer.innerHTML = '<p style="color: #666; text-align: center;">暂无Provider配置</p>';
+                return;
+            }
+            
+            let html = '';
+            data.providers.forEach((provider, index) => {
+                const bankInfo = provider.metadata;
+                html += `
+                    <div class="provider-card">
+                        <div class="provider-header">
+                            <div class="provider-name">🏦 ${bankInfo.bankName}</div>
+                            <div class="provider-info">ID: ${provider.providerId.substring(0, 8)}...</div>
+                        </div>
+                        <div class="provider-info">
+                            银行代码: ${bankInfo.bankCode} | 
+                            API端点: ${bankInfo.apiEndpoint} | 
+                            支持币种: ${bankInfo.supportedCurrencies.join(', ')}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            providersContainer.innerHTML = html;
+        }
+        
+        // 显示提示
+        function showAlert(message, type) {
+            const alertClass = type === 'success' ? 'alert-success' : 'alert-error';
+            alertArea.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
+            
+            // 3秒后隐藏
+            setTimeout(() => {
+                alertArea.innerHTML = '';
+            }, 3000);
+        }
+        
+        // 显示加载状态
+        function showLoading(show) {
+            loadingSpinner.style.display = show ? 'inline-block' : 'none';
+            triggerBtn.disabled = show;
+        }
+        
+        // 添加日志
+        function addLog(message) {
+            const time = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            logEntry.innerHTML = `<span class="log-time">[${time}]</span>${message}`;
+            
+            logContainer.appendChild(logEntry);
+            
+            // 保持最新日志可见
+            logContainer.scrollTop = logContainer.scrollHeight;
+            
+            // 限制日志条数
+            const entries = logContainer.querySelectorAll('.log-entry');
+            if (entries.length > 50) {
+                entries[0].remove();
+            }
+        }
+        
+        // 开始状态轮询
+        function startStatusPolling() {
+            if (statusPolling) return;
+            
+            statusPolling = setInterval(() => {
+                checkStatus();
+            }, 2000); // 每2秒查询一次
+            
+            addLog('🔄 开始状态轮询');
+        }
+        
+        // 停止状态轮询
+        function stopStatusPolling() {
+            if (statusPolling) {
+                clearInterval(statusPolling);
+                statusPolling = null;
+                addLog('⏹️ 停止状态轮询');
+            }
+        }
+        
+        // 页面关闭前停止轮询
+        window.addEventListener('beforeunload', () => {
+            stopStatusPolling();
+        });
+    </script>
+</body>
+</html>

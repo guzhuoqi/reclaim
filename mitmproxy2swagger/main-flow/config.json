@@ -1,0 +1,41 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "reload": false,
+    "log_level": "info"
+  },
+  "directories": {
+    "data": "data",
+    "temp": "temp", 
+    "uploads": "uploads",
+    "logs": "logs"
+  },
+  "pipeline": {
+    "default_mitm_host": "10.10.10.146",
+    "default_mitm_port": 8082,
+    "timeout_seconds": 300,
+    "max_file_size_mb": 100
+  },
+  "supported_banks": [
+    {
+      "code": "boc_hk",
+      "name": "中国银行香港",
+      "domain": "bochk.com",
+      "description": "支持中国银行香港的余额查询Provider生成"
+    },
+    {
+      "code": "cmb_wing_lung", 
+      "name": "招商永隆银行",
+      "domain": "cmbwinglungbank.com",
+      "description": "支持招商永隆银行的余额查询Provider生成"
+    }
+  ],
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "file": "logs/api_server.log",
+    "max_size_mb": 50,
+    "backup_count": 5
+  }
+}

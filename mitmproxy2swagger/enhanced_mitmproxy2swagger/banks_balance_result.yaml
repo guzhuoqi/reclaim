@@ -1,540 +1,1543 @@
 openapi: 3.0.0
 info:
-  title: 
-    /Users/gu/IdeaProjects/reclaim/mitmproxy2swagger/testdata/flows_with_balance.mitm
-    Enhanced Mitmproxy2Swagger
+  title: ../testdata/flows_with_balance.mitm Enhanced Mitmproxy2Swagger
   version: 1.0.0
   description: Enhanced with balance data extraction capabilities
+  x-analysis-stats:
+    total_flows: 159
+    processed_flows: 159
+    balance_apis_found: 6
+    extraction_success_rate: 0.03773584905660377
+    currencies_detected:
+    - HKD
+    - USD
+    banks_detected:
+    - hk_banks
 servers:
 - url: https://its.bochk.com
-  description: 中国银行香港 API Server
+  description: Hong Kong Banking (BOC Branch) API Server
 - url: https://www.cmbwinglungbank.com
-  description: 招商永隆银行 API Server
+  description: Hong Kong Banking (Wing Lung Branch) API Server
 paths:
   /acc.overview.do:
     get:
-      summary: GET acc.overview.do
+      summary: GET /acc.overview.do
+      description: Auto-generated from mitmproxy capture
       responses:
         '200':
-          description: 'OK (Contains balance data: HKD, USD, TOTAL_HKD)'
+          description: Successful response
           content:
-            text/plain:
+            text/html:
+              schema:
+                type: string
+            application/json:
               schema:
                 type: object
                 properties:
-                  original_response:
-                    type: object
-                  extracted_balance_data:
-                    type: object
-                    properties:
-                      bank:
-                        type: string
-                      api_endpoint:
-                        type: string
-                      balances:
-                        type: object
-                        properties:
-                          HKD:
-                            type: array
-                            items:
-                              type: string
-                          USD:
-                            type: array
-                            items:
-                              type: string
-                          TOTAL_HKD:
-                            type: array
-                            items:
-                              type: string
-                      raw_amounts:
-                        type: array
-                        items:
-                          type: string
-                      metadata:
-                        type: object
-                        properties:
-                          extraction_method:
-                            type: string
-                          confidence:
-                            type: string
-                      all_detected_amounts:
-                        type: array
-                        items:
-                          type: string
-              x-balance-examples:
-                account_balances:
-                  HKD: 13,392.83
-                  USD: '101.24'
-                  TOTAL_HKD: 14,185.11
-                metadata:
-                  bank: boc_hk
-                  extraction_method: regex_pattern_matching
-                  confidence: high
-              example:
-                original_response: {}
-                extracted_balance_data:
-                  bank: boc_hk
-                  api_endpoint: https://its.bochk.com/acc.overview.do
                   balances:
-                    HKD:
-                    - 13,392.83
-                    USD:
-                    - '101.24'
-                    TOTAL_HKD:
-                    - 14,185.11
-                  raw_amounts:
-                  - 13,392.83 HKD
-                  - 101.24 USD
-                  - 14,185.11 TOTAL_HKD
-                  metadata:
-                    extraction_method: regex_pattern_matching
-                    confidence: high
-                  all_detected_amounts:
-                  - 13,392.83
-                  - '101.24'
-                  - 14,185.11
-                  - '4.01'
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BalanceData'
+      x-bank-region: hk_banks
+      x-bank-type: unknown
+      x-api-category: unknown
+      x-server-domain: its.bochk.com
+      x-extracted-balances:
+      - amount: 13,392.83
+        numeric: 13392.83
+        currency: HKD
+        confidence: 0.6
+        extraction_method: universal_rules_engine
+        account_type: unknown
+      - amount: '4.01'
+        numeric: 4.01
+        currency: HKD
+        confidence: 0.0
+        extraction_method: universal_rules_engine
+        account_type: unknown
+      - amount: '101.24'
+        numeric: 101.24
+        currency: USD
+        confidence: 0.6
+        extraction_method: universal_rules_engine
+        account_type: unknown
+      x-currencies-found:
+      - HKD
+      - USD
+      x-quality-score: 0.84
+      x-overall-confidence: 0.5409273182957393
   /ibanking/logon/NbHomLogonInp.jsp:
     get:
-      summary: GET nbhomlogoninp.jsp
+      summary: GET /ibanking/logon/NbHomLogonInp.jsp
+      description: Auto-generated from mitmproxy capture
       responses:
         '200':
-          description: OK
-          content: {}
-      parameters:
-      - name: mcp_language
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: mcp_language
-        in: query
-        required: false
-        schema:
-          type: string
-  /ibanking/WlbLogonServlet:
-    post:
-      summary: POST wlblogonservlet
-      responses:
-        '200':
-          description: OK
-          content: {}
-  /ibanking/McpCSReqServlet:
-    post:
-      summary: POST mcpcsreqservlet
-      responses:
-        '200':
-          description: 'OK (Contains balance data: HKD, USD, CNY)'
+          description: Successful response
           content:
-            text/plain:
+            text/html:
+              schema:
+                type: string
+            application/json:
               schema:
                 type: object
                 properties:
-                  original_response:
-                    type: object
-                  extracted_balance_data:
-                    type: object
-                    properties:
-                      bank:
-                        type: string
-                      api_endpoint:
-                        type: string
-                      balances:
-                        type: object
-                        properties:
-                          HKD:
-                            type: array
-                            items:
-                              type: string
-                          USD:
-                            type: array
-                            items:
-                              type: string
-                          CNY:
-                            type: array
-                            items:
-                              type: string
-                      raw_amounts:
-                        type: array
-                        items:
-                          type: string
-                      metadata:
-                        type: object
-                        properties:
-                          extraction_method:
-                            type: string
-                          confidence:
-                            type: string
-                      all_detected_amounts:
-                        type: array
-                        items:
-                          type: string
-              x-balance-examples:
-                account_balances:
-                  HKD: 7,151.78
-                  USD: '30.75'
-                  CNY: '0.00'
-                metadata:
-                  bank: cmb_wing_lung
-                  extraction_method: regex_pattern_matching
-                  confidence: high
-              example:
-                original_response: {}
-                extracted_balance_data:
-                  bank: cmb_wing_lung
-                  api_endpoint: 
-                    https://www.cmbwinglungbank.com/ibanking/McpCSReqServlet?dse_operationName=NbBkgActdetCoaProc2022&dse_processorState=initial&dse_nextEventName=start&dse_sessionId=CGAWIMIRJTCQEGJHJVGKGOFHAXBBEHEIHRJUFIFB&mcp_language=cn&dse_pageId=1&dse_parentContextName=&mcp_timestamp=1754038386662&AcctTypeIds=DDA,CUR,SAV,FDA,CON,MEC&AcctTypeId=CON&RequestType=D&selectedProductKey=CON
                   balances:
-                    HKD:
-                    - 7,151.78
-                    USD:
-                    - '30.75'
-                    CNY:
-                    - '0.00'
-                  raw_amounts:
-                  - 7,151.78 HKD
-                  - 30.75 USD
-                  - 0.00 CNY
-                  metadata:
-                    extraction_method: regex_pattern_matching
-                    confidence: high
-                  all_detected_amounts:
-                  - '0.00'
-                  - '30.75'
-                  - 7,151.78
-      parameters:
-      - name: dse_operationName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_processorState
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_nextEventName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_sessionId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: mcp_language
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_pageId
-        in: query
-        required: false
-        schema:
-          type: number
-      - name: mcp_timestamp
-        in: query
-        required: false
-        schema:
-          type: number
-      - name: AcctTypeIds
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: AcctTypeId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: RequestType
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: selectedProductKey
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_operationName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_processorState
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_nextEventName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_sessionId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: mcp_language
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_pageId
-        in: query
-        required: false
-        schema:
-          type: number
-      - name: mcp_timestamp
-        in: query
-        required: false
-        schema:
-          type: number
-      - name: AcctTypeIds
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: AcctTypeId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: RequestType
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: selectedProductKey
-        in: query
-        required: false
-        schema:
-          type: string
-    get:
-      summary: GET mcpcsreqservlet
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BalanceData'
+      x-bank-region: hk_banks
+      x-bank-type: unknown
+      x-api-category: unknown
+      x-server-domain: www.cmbwinglungbank.com
+      x-extracted-balances:
+      - amount: '537.36'
+        numeric: 537.36
+        currency: USD
+        confidence: 0.0
+        extraction_method: universal_rules_engine
+        account_type: unknown
+      x-currencies-found:
+      - USD
+      x-quality-score: 0.84
+      x-overall-confidence: 0.3177443609022556
+  /ibanking/WlbLogonServlet:
+    post:
+      summary: POST /ibanking/WlbLogonServlet
+      description: Auto-generated from mitmproxy capture
       responses:
         '200':
-          description: OK
-          content: {}
-      parameters:
-      - name: dse_operationName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_processorState
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_nextEventName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_sessionId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: mcp_language
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_pageId
-        in: query
-        required: false
-        schema:
-          type: number
-      - name: jspName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_sessionId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: mcp_funcId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: mcp_language
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_operationName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_processorState
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_nextEventName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_sessionId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: mcp_language
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_pageId
-        in: query
-        required: false
-        schema:
-          type: number
-      - name: mcp_timestamp
-        in: query
-        required: false
-        schema:
-          type: number
-      - name: mcp_funcId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_operationName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_processorState
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_nextEventName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_sessionId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: mcp_language
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_pageId
-        in: query
-        required: false
-        schema:
-          type: number
-      - name: jspName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_sessionId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: mcp_funcId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: mcp_language
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_operationName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_processorState
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_nextEventName
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_sessionId
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: mcp_language
-        in: query
-        required: false
-        schema:
-          type: string
-      - name: dse_pageId
-        in: query
-        required: false
-        schema:
-          type: number
-      - name: mcp_timestamp
-        in: query
-        required: false
-        schema:
-          type: number
-      - name: mcp_funcId
-        in: query
-        required: false
-        schema:
-          type: string
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BalanceData'
+      x-bank-region: hk_banks
+      x-bank-type: unknown
+      x-api-category: unknown
+      x-server-domain: www.cmbwinglungbank.com
+      x-extracted-balances:
+      - amount: '12.29'
+        numeric: 12.29
+        currency: HKD
+        confidence: 0.0
+        extraction_method: universal_rules_engine
+        account_type: unknown
+      x-currencies-found:
+      - HKD
+      x-quality-score: 0.84
+      x-overall-confidence: 0.16060150375939847
+  /ibanking/McpCSReqServlet:
+    get:
+      summary: GET /ibanking/McpCSReqServlet
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+    post:
+      summary: POST /ibanking/McpCSReqServlet
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BalanceData'
+      x-bank-region: hk_banks
+      x-bank-type: unknown
+      x-api-category: unknown
+      x-server-domain: www.cmbwinglungbank.com
+      x-extracted-balances:
+      - amount: 7,151.78
+        numeric: 7151.78
+        currency: HKD
+        confidence: 0.25
+        extraction_method: universal_rules_engine
+        account_type: unknown
+      - amount: '30.75'
+        numeric: 30.75
+        currency: USD
+        confidence: 0.25
+        extraction_method: universal_rules_engine
+        account_type: unknown
+      x-currencies-found:
+      - HKD
+      - USD
+      x-quality-score: 0.37333333333333335
+      x-overall-confidence: 0.40859649122807024
+  /css/textAd.css:
+    get:
+      summary: GET /css/textAd.css
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/browser_detect.js:
+    get:
+      summary: GET /js/browser_detect.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /css/ocsCin.css:
+    get:
+      summary: GET /css/ocsCin.css
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /css/orange.css:
+    get:
+      summary: GET /css/orange.css
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /css/c.css:
+    get:
+      summary: GET /css/c.css
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /css/linkui.css:
+    get:
+      summary: GET /css/linkui.css
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /css/promote.css:
+    get:
+      summary: GET /css/promote.css
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /css/menu.css:
+    get:
+      summary: GET /css/menu.css
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/IbsCommon.js:
+    get:
+      summary: GET /js/IbsCommon.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/IbsDelay.js:
+    get:
+      summary: GET /js/IbsDelay.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/general.js:
+    get:
+      summary: GET /js/general.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/text_c.js:
+    get:
+      summary: GET /js/text_c.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/calendarLoader.js:
+    get:
+      summary: GET /js/calendarLoader.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/IbsValidForm.js:
+    get:
+      summary: GET /js/IbsValidForm.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/IbsCbsCommon.js:
+    get:
+      summary: GET /js/IbsCbsCommon.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/jquery-min.js:
+    get:
+      summary: GET /js/jquery-min.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/jQuery.migrate.js:
+    get:
+      summary: GET /js/jQuery.migrate.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/jquery.xdomainrequest.min.js:
+    get:
+      summary: GET /js/jquery.xdomainrequest.min.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/LinkUiKit.js:
+    get:
+      summary: GET /js/LinkUiKit.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/top/logo_boc_ifree.gif:
+    get:
+      summary: GET /images/common/top/logo_boc_ifree.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /CQ/ibsbanner/TopBanner/mgmTop_C.jpg:
+    get:
+      summary: GET /CQ/ibsbanner/TopBanner/mgmTop_C.jpg
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/top/home_c.gif:
+    get:
+      summary: GET /images/common/top/home_c.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/top/lang_e.gif:
+    get:
+      summary: GET /images/common/top/lang_e.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/top/lang_s.gif:
+    get:
+      summary: GET /images/common/top/lang_s.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/iframe_core_src.js:
+    get:
+      summary: GET /js/iframe_core_src.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/iframe_mmenudom.js:
+    get:
+      summary: GET /js/iframe_mmenudom.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/iframe_menu_boc_c.js:
+    get:
+      summary: GET /js/iframe_menu_boc_c.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/eJourney/ejy_icn.gif:
+    get:
+      summary: GET /images/eJourney/ejy_icn.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/top/quicklink_c.gif:
+    get:
+      summary: GET /images/common/top/quicklink_c.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/nav/nav1_bkgd.gif:
+    get:
+      summary: GET /images/common/nav/nav1_bkgd.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/nav/nav1_l.gif:
+    get:
+      summary: GET /images/common/nav/nav1_l.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/nav/nav1_corner.gif:
+    get:
+      summary: GET /images/common/nav/nav1_corner.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/spacer.gif:
+    get:
+      summary: GET /images/common/spacer.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/top/logout_c.gif:
+    get:
+      summary: GET /images/common/top/logout_c.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/assistant/mailbox/email.jpg:
+    get:
+      summary: GET /images/assistant/mailbox/email.jpg
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/icon/switch_off_menu.gif:
+    get:
+      summary: GET /images/common/icon/switch_off_menu.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/top/contactUs_c.gif:
+    get:
+      summary: GET /images/common/top/contactUs_c.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/icon/help.jpg:
+    get:
+      summary: GET /images/common/icon/help.jpg
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/promote/red_croner_right.gif:
+    get:
+      summary: GET /images/promote/red_croner_right.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/btn/button_arc_single.gif:
+    get:
+      summary: GET /images/common/btn/button_arc_single.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/title_bkgd.gif:
+    get:
+      summary: GET /images/common/title_bkgd.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/icon/print.jpg:
+    get:
+      summary: GET /images/common/icon/print.jpg
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/btn/button_li_single.gif:
+    get:
+      summary: GET /images/common/btn/button_li_single.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/btn/button_tb_li_ns.gif:
+    get:
+      summary: GET /images/common/btn/button_tb_li_ns.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/promote/red_backgroud.gif:
+    get:
+      summary: GET /images/promote/red_backgroud.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/btn/button_tb_arc_ns.gif:
+    get:
+      summary: GET /images/common/btn/button_tb_arc_ns.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/icon/shortcut_add.gif:
+    get:
+      summary: GET /images/common/icon/shortcut_add.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/icon/link_btn_normal_C.png:
+    get:
+      summary: GET /images/common/icon/link_btn_normal_C.png
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/iframe/nav1_left_c.gif:
+    get:
+      summary: GET /images/common/iframe/nav1_left_c.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/promote/red_croner_left.gif:
+    get:
+      summary: GET /images/promote/red_croner_left.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/iframe/nav1_right_c.gif:
+    get:
+      summary: GET /images/common/iframe/nav1_right_c.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/nav/orange/nav2_bkgd.gif:
+    get:
+      summary: GET /images/common/nav/orange/nav2_bkgd.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/nav/orange/nav2_corner.gif:
+    get:
+      summary: GET /images/common/nav/orange/nav2_corner.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/nav/nav3_corner_right_on.gif:
+    get:
+      summary: GET /images/common/nav/nav3_corner_right_on.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/nav/nav3_corner_left_on.gif:
+    get:
+      summary: GET /images/common/nav/nav3_corner_left_on.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/nav/nav3_corner_right.gif:
+    get:
+      summary: GET /images/common/nav/nav3_corner_right.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/nav/nav3_corner_left.gif:
+    get:
+      summary: GET /images/common/nav/nav3_corner_left.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /images/common/iframe/nav_arrow.gif:
+    get:
+      summary: GET /images/common/iframe/nav_arrow.gif
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /CnNbMainR.html:
+    get:
+      summary: GET /CnNbMainR.html
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/globalVar.js:
+    get:
+      summary: GET /js/globalVar.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/Function.js:
+    get:
+      summary: GET /js/Function.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/ENwlbHandleError.js:
+    get:
+      summary: GET /js/ENwlbHandleError.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BalanceData'
+      x-bank-region: hk_banks
+      x-bank-type: unknown
+      x-api-category: unknown
+      x-server-domain: www.cmbwinglungbank.com
+      x-extracted-balances:
+      - amount: '100.00'
+        numeric: 100.0
+        currency: HKD
+        confidence: 0.5
+        extraction_method: universal_rules_engine
+        account_type: unknown
+      x-currencies-found:
+      - HKD
+      x-quality-score: 0.7
+      x-overall-confidence: 0.3469924812030075
+  /js/CNwlbHandleError.js:
+    get:
+      summary: GET /js/CNwlbHandleError.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/SCwlbHandleError.js:
+    get:
+      summary: GET /js/SCwlbHandleError.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/FieldValidator.js:
+    get:
+      summary: GET /js/FieldValidator.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/ErrDisplayWin.js:
+    get:
+      summary: GET /js/ErrDisplayWin.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/typhoonInd.js:
+    get:
+      summary: GET /js/typhoonInd.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/typhoonList.js:
+    get:
+      summary: GET /js/typhoonList.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/ControlCenter.js:
+    get:
+      summary: GET /js/ControlCenter.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /html/XxNbOthWBlank.html:
+    get:
+      summary: GET /html/XxNbOthWBlank.html
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/jquery-3.2.1.min.js:
+    get:
+      summary: GET /js/jquery-3.2.1.min.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/common/correctpng.js:
+    get:
+      summary: GET /js/common/correctpng.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/common/wlbJs.js:
+    get:
+      summary: GET /js/common/wlbJs.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/resize.js:
+    get:
+      summary: GET /js/resize.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/McpAsciiToEbcdic.js:
+    get:
+      summary: GET /js/log/McpAsciiToEbcdic.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/McpMDEncryption.js:
+    get:
+      summary: GET /js/log/McpMDEncryption.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/McpMD5Encryption.js:
+    get:
+      summary: GET /js/log/McpMD5Encryption.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/McpPasswordEncryptionR.js:
+    get:
+      summary: GET /js/log/McpPasswordEncryptionR.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/McpPassword.js:
+    get:
+      summary: GET /js/log/McpPassword.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/McpPasswordHashingR.js:
+    get:
+      summary: GET /js/log/McpPasswordHashingR.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/McpPasswordTQTR.js:
+    get:
+      summary: GET /js/log/McpPasswordTQTR.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/McpPasswordTSTT.js:
+    get:
+      summary: GET /js/log/McpPasswordTSTT.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/McpHexUtil.js:
+    get:
+      summary: GET /js/log/McpHexUtil.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/OperationMode.js:
+    get:
+      summary: GET /js/log/OperationMode.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/OperationModeCBC.js:
+    get:
+      summary: GET /js/log/OperationModeCBC.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/DESCore1KeyBlockCipher.js:
+    get:
+      summary: GET /js/log/DESCore1KeyBlockCipher.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/McpHSMEncodeEnginee.js:
+    get:
+      summary: GET /js/log/McpHSMEncodeEnginee.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/log/security.js:
+    get:
+      summary: GET /js/log/security.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/DimmingDiv.js:
+    get:
+      summary: GET /js/DimmingDiv.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/swiper.min.js:
+    get:
+      summary: GET /js/swiper.min.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE/jsbn.js:
+    get:
+      summary: GET /js/E2EE/jsbn.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE/tripledes.js:
+    get:
+      summary: GET /js/E2EE/tripledes.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE/mode-ecb.js:
+    get:
+      summary: GET /js/E2EE/mode-ecb.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE/pad-zeropadding-min.js:
+    get:
+      summary: GET /js/E2EE/pad-zeropadding-min.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE/WPCommon.js:
+    get:
+      summary: GET /js/E2EE/WPCommon.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE/sjcl.js:
+    get:
+      summary: GET /js/E2EE/sjcl.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE/E2EE.js:
+    get:
+      summary: GET /js/E2EE/E2EE.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE/ErrorCheck.js:
+    get:
+      summary: GET /js/E2EE/ErrorCheck.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE/pad-nopadding.js:
+    get:
+      summary: GET /js/E2EE/pad-nopadding.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE10K/WPRSA.js:
+    get:
+      summary: GET /js/E2EE10K/WPRSA.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE10K/crypto-4.0.0.js:
+    get:
+      summary: GET /js/E2EE10K/crypto-4.0.0.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE10K/WPCommon.js:
+    get:
+      summary: GET /js/E2EE10K/WPCommon.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE10K/WPConstant.js:
+    get:
+      summary: GET /js/E2EE10K/WPConstant.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE10K/WPErrorID.js:
+    get:
+      summary: GET /js/E2EE10K/WPErrorID.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE10K/sjcl.js:
+    get:
+      summary: GET /js/E2EE10K/sjcl.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE10K/WPE2EE.js:
+    get:
+      summary: GET /js/E2EE10K/WPE2EE.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/E2EE10K/ErrorCheck.js:
+    get:
+      summary: GET /js/E2EE10K/ErrorCheck.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /ibanking/Kaptcha.jpg:
+    get:
+      summary: GET /ibanking/Kaptcha.jpg
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/common/jquery-1.4.2.js:
+    get:
+      summary: GET /js/common/jquery-1.4.2.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /v1/leaks:lookupSingle:
+    post:
+      summary: POST /v1/leaks:lookupSingle
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /html/CnEnrollRewardPopwindow.html:
+    get:
+      summary: GET /html/CnEnrollRewardPopwindow.html
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /html/CnEnrolledRewardPopwin.html:
+    get:
+      summary: GET /html/CnEnrolledRewardPopwin.html
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /html/CnEnrollRewardAgreePopwindow.html:
+    get:
+      summary: GET /html/CnEnrollRewardAgreePopwindow.html
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/common/jquery.jScroll.js:
+    get:
+      summary: GET /js/common/jquery.jScroll.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/common/datepicker.js:
+    get:
+      summary: GET /js/common/datepicker.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /js/ui.tools.js:
+    get:
+      summary: GET /js/ui.tools.js
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /chrome-variations/seed:
+    get:
+      summary: GET /chrome-variations/seed
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /v4/threatListUpdates:fetch:
+    get:
+      summary: GET /v4/threatListUpdates:fetch
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
+  /affiliation/v1/affiliation:lookupByHashPrefix:
+    post:
+      summary: POST /affiliation/v1/affiliation:lookupByHashPrefix
+      description: Auto-generated from mitmproxy capture
+      responses:
+        '200':
+          description: Successful response
+          content:
+            text/html:
+              schema:
+                type: string
 x-path-templates:
-- ignore:/lgn.default.do
-- ignore:/css/layout.css
-- ignore:/css/orange.css
-- ignore:/css/ocsCin.css
-- ignore:/css/c.css
-- ignore:/css/menu.css
+- /acc.overview.do
+- ignore:/css/textAd.css
 - ignore:/js/browser_detect.js
+- ignore:/css/ocsCin.css
+- ignore:/css/orange.css
+- ignore:/css/c.css
+- ignore:/css/linkui.css
+- ignore:/css/promote.css
+- ignore:/css/menu.css
 - ignore:/js/IbsCommon.js
+- ignore:/js/IbsDelay.js
 - ignore:/js/general.js
 - ignore:/js/text_c.js
 - ignore:/js/calendarLoader.js
 - ignore:/js/IbsValidForm.js
-- ignore:/js/IbsDelay.js
+- ignore:/js/IbsCbsCommon.js
 - ignore:/js/jquery-min.js
 - ignore:/js/jQuery.migrate.js
-- ignore:/js/LinkUiKit.js
-- ignore:/images/common/top/logo_boc.gif
-- ignore:/images/common/top/popup_lang_e.gif
-- ignore:/images/common/top/popup_lang_s.gif
-- ignore:/images/common/spacer.gif
-- ignore:/images/common/icon/print.jpg
-- ignore:/images/common/icon/help.jpg
-- ignore:/images/common/icon/link_btn_normal_C.png
-- ignore:/images/common/title_bkgd.gif
-- ignore:/images/common/btn/button_li_single.gif
-- ignore:/images/common/btn/button_arc_single.gif
-- ignore:/images/common/btn/button_li_large_ns.gif
-- ignore:/images/common/btn/button_arc_large_ns.gif
-- ignore:/exp.remindPass_done.do
-- ignore:/css/textAd.css
-- ignore:/js/IbsCbsCommon.js
 - ignore:/js/jquery.xdomainrequest.min.js
-- ignore:/js/IbsLgnDefaultPage.js
-- ignore:/css/linkui.css
+- ignore:/js/LinkUiKit.js
 - ignore:/images/common/top/logo_boc_ifree.gif
 - ignore:/CQ/ibsbanner/TopBanner/mgmTop_C.jpg
 - ignore:/images/common/top/home_c.gif
@@ -542,39 +1545,38 @@ x-path-templates:
 - ignore:/images/common/top/lang_s.gif
 - ignore:/js/iframe_core_src.js
 - ignore:/js/iframe_mmenudom.js
-- ignore:/images/common/nav/nav1_corner.gif
-- ignore:/images/assistant/mailbox/email.jpg
-- ignore:/images/common/top/quicklink_c.gif
-- ignore:/images/common/top/logout_c.gif
-- ignore:/images/common/nav/nav1_bkgd.gif
-- ignore:/images/eJourney/ejy_icn.gif
-- ignore:/images/common/top/contactUs_c.gif
-- ignore:/images/common/icon/switch_off_menu.gif
-- ignore:/images/common/nav/nav1_l.gif
 - ignore:/js/iframe_menu_boc_c.js
-- ignore:/banner/rightButton.png
-- ignore:/login/images/depositProtectionSchemeMember.svg
-- ignore:/images/common/iframe/nav1_left_c.gif
-- ignore:/images/common/iframe/nav1_right_c.gif
-- ignore:/banner/DEFAULT_IBS_LARGE_CHT.GIF
-- ignore:/images/common/btn/button_li_single_iFree.gif
-- ignore:/images/common/btn/button_arc_single_iFree.gif
-- ignore:/images/iFree_default.jpg
-- ignore:/images/common/iframe/nav_arrow.gif
-- /acc.overview.do
-- ignore:/css/promote.css
+- ignore:/images/eJourney/ejy_icn.gif
+- ignore:/images/common/top/quicklink_c.gif
+- ignore:/images/common/nav/nav1_bkgd.gif
+- ignore:/images/common/nav/nav1_l.gif
+- ignore:/images/common/nav/nav1_corner.gif
+- ignore:/images/common/spacer.gif
+- ignore:/images/common/top/logout_c.gif
+- ignore:/images/assistant/mailbox/email.jpg
+- ignore:/images/common/icon/switch_off_menu.gif
+- ignore:/images/common/top/contactUs_c.gif
+- ignore:/images/common/icon/help.jpg
+- ignore:/images/promote/red_croner_right.gif
+- ignore:/images/common/btn/button_arc_single.gif
+- ignore:/images/common/title_bkgd.gif
+- ignore:/images/common/icon/print.jpg
+- ignore:/images/common/btn/button_li_single.gif
+- ignore:/images/common/btn/button_tb_li_ns.gif
 - ignore:/images/promote/red_backgroud.gif
 - ignore:/images/common/btn/button_tb_arc_ns.gif
-- ignore:/images/promote/red_croner_left.gif
-- ignore:/images/common/btn/button_tb_li_ns.gif
 - ignore:/images/common/icon/shortcut_add.gif
-- ignore:/images/promote/red_croner_right.gif
+- ignore:/images/common/icon/link_btn_normal_C.png
+- ignore:/images/common/iframe/nav1_left_c.gif
+- ignore:/images/promote/red_croner_left.gif
+- ignore:/images/common/iframe/nav1_right_c.gif
 - ignore:/images/common/nav/orange/nav2_bkgd.gif
 - ignore:/images/common/nav/orange/nav2_corner.gif
 - ignore:/images/common/nav/nav3_corner_right_on.gif
 - ignore:/images/common/nav/nav3_corner_left_on.gif
 - ignore:/images/common/nav/nav3_corner_right.gif
 - ignore:/images/common/nav/nav3_corner_left.gif
+- ignore:/images/common/iframe/nav_arrow.gif
 - ignore:/CnNbMainR.html
 - ignore:/js/globalVar.js
 - ignore:/js/Function.js
@@ -625,113 +1627,35 @@ x-path-templates:
 - ignore:/js/E2EE10K/sjcl.js
 - ignore:/js/E2EE10K/WPE2EE.js
 - ignore:/js/E2EE10K/ErrorCheck.js
-- ignore:/images/Bg_img3.jpg
-- ignore:/images/common/logo/wlbLogo.png
-- ignore:/images/pnbcorp/cnNbLogonpageTopBanner.jpg
-- ignore:/images/DPS.png
-- ignore:/images/pnbcorp/cngreentit_netbankinglogin.jpg
-- ignore:/images/problem_web.png
-- ignore:/images/common/cssStyle/background/Bg_main_Left_leftsidebar.jpg
-- ignore:/images/common/cssStyle/background/Bg_Main_Left_Iitle.jpg
-- ignore:/images/common/cssStyle/icon/ico_leftSidebarMuneList.gif
-- ignore:/images/common/cssStyle/background/Bg_Header.jpg
-- ignore:/images/common/cssStyle/button/btnDelSmall.jpg
-- ignore:/images/common/cssStyle/background/Bg_High.jpg
-- ignore:/images/common/cssStyle/background/Bg_main_Left_leftContent.jpg
-- ignore:/images/common/cssStyle/button/btnAddSmall.jpg
-- ignore:/images/common/cssStyle/background/Bg_AllBg.jpg
-- ignore:/images/voice_captcha.png
-- ignore:/images/common/cssStyle/background/Bg_Main_Left_Bottom.jpg
-- ignore:/images/cn_rebBtnHover.jpg
-- ignore:/images/xx_tableTopBg.jpg
-- ignore:/images/xx_login_tablemidlinebg.jpg
-- ignore:/images/xx_tableBottomBg.jpg
-- ignore:/images/common/cssStyle/button/btn_Redsubmit.jpg
 - ignore:/ibanking/Kaptcha.jpg
-- ignore:/images/common/cssStyle/icon/ico_leftSidebarMuneListhover.gif
-- ignore:/images/common/cssStyle/button/btn_Redsubmithover.jpg
 - ignore:/ibanking/WlbLogonServlet
 - ignore:/js/common/jquery-1.4.2.js
-- ignore:/images/cnNbLogonpageTopBanner.jpg
-- ignore:/images/cngreentit_netbankinglogin.jpg
 - /ibanking/McpCSReqServlet
-- ignore:/images/cnLeftSideBarBotImg.jpg
-- ignore:/images/FixDep.jpg
-- ignore:/images/FoxChg.jpg
-- ignore:/images/SecOpn.jpg
-- ignore:/images/WelOpn.jpg
-- ignore:/images/IPO-icon.jpg
-- ignore:/images/banner/CnLogonBanner.png
-- ignore:/images/greentab.jpg
 - ignore:/html/CnEnrollRewardPopwindow.html
 - ignore:/html/CnEnrolledRewardPopwin.html
 - ignore:/html/CnEnrollRewardAgreePopwindow.html
-- ignore:/images/common/icon/icoHome.gif
-- ignore:/images/common/icon/icoSpecification.png
-- ignore:/images/common/icon/icoPrint.png
-- ignore:/images/common/cssStyle/background/Bg_logout.gif
-- ignore:/enrollRewardstyle.css
-- ignore:/images/common/cssStyle/menu/Bg_mune.jpg
-- ignore:/style.css
-- ignore:/images/loginInfoPageTopTitleBg.jpg
-- ignore:/images/loginInfoPageNewsTitleBg.jpg
-- ignore:/images/img.jpg
-- ignore:/images/loginInfoMessageTopTrBg.jpg
-- ignore:/images/loginInfoPageNewsTitleBgLeft.jpg
-- ignore:/images/Cn_btn_Close_off_r.jpg
-- ignore:/images/gift_icon.jpg
-- ignore:/images/warning.gif
-- ignore:/images/Cn_btn_AgreeandJoin_off.jpg
-- ignore:/images/common/cssStyle/menu/Bg_muneHover.jpg
-- ignore:/images/common/pageImages/Cn_IPO.jpg
-- ignore:/images/common/pageImages/banner1.png
-- ignore:/images/common/icon/pic1.jpg
-- ignore:/images/common/icon/pic2.jpg
-- ignore:/images/common/icon/search.gif
-- ignore:/images/common/icon/servertime2.png
-- ignore:/images/common/cssStyle/background/Bg_Main_Left_Iitle2.jpg
-- ignore:/images/common/cssStyle/background/Bg_MainContentBannerRedLine.jpg
-- ignore:/js/common/datepicker/css/datepicker.css
 - ignore:/js/common/jquery.jScroll.js
 - ignore:/js/common/datepicker.js
-- ignore:/images/common/cssStyle/background/Bg_dataTableTop.jpg
-- ignore:/images/common/cssStyle/background/Bg_dataTableBottom.jpg
 - ignore:/js/ui.tools.js
-- ignore:/images/common/icon/icotblops.gif
-- ignore:/lgn.default.do
-- ignore:/css/layout.css
-- ignore:/css/orange.css
-- ignore:/css/ocsCin.css
-- ignore:/css/c.css
-- ignore:/css/menu.css
+- ignore:/css/textAd.css
 - ignore:/js/browser_detect.js
+- ignore:/css/ocsCin.css
+- ignore:/css/orange.css
+- ignore:/css/c.css
+- ignore:/css/linkui.css
+- ignore:/css/promote.css
+- ignore:/css/menu.css
 - ignore:/js/IbsCommon.js
+- ignore:/js/IbsDelay.js
 - ignore:/js/general.js
 - ignore:/js/text_c.js
 - ignore:/js/calendarLoader.js
 - ignore:/js/IbsValidForm.js
-- ignore:/js/IbsDelay.js
+- ignore:/js/IbsCbsCommon.js
 - ignore:/js/jquery-min.js
 - ignore:/js/jQuery.migrate.js
-- ignore:/js/LinkUiKit.js
-- ignore:/images/common/top/logo_boc.gif
-- ignore:/images/common/top/popup_lang_e.gif
-- ignore:/images/common/top/popup_lang_s.gif
-- ignore:/images/common/spacer.gif
-- ignore:/images/common/icon/print.jpg
-- ignore:/images/common/icon/help.jpg
-- ignore:/images/common/icon/link_btn_normal_C.png
-- ignore:/images/common/title_bkgd.gif
-- ignore:/images/common/btn/button_li_single.gif
-- ignore:/images/common/btn/button_arc_single.gif
-- ignore:/images/common/btn/button_li_large_ns.gif
-- ignore:/images/common/btn/button_arc_large_ns.gif
-- ignore:/exp.remindPass_done.do
-- ignore:/css/textAd.css
-- ignore:/js/IbsCbsCommon.js
 - ignore:/js/jquery.xdomainrequest.min.js
-- ignore:/js/IbsLgnDefaultPage.js
-- ignore:/css/linkui.css
+- ignore:/js/LinkUiKit.js
 - ignore:/images/common/top/logo_boc_ifree.gif
 - ignore:/CQ/ibsbanner/TopBanner/mgmTop_C.jpg
 - ignore:/images/common/top/home_c.gif
@@ -739,37 +1663,38 @@ x-path-templates:
 - ignore:/images/common/top/lang_s.gif
 - ignore:/js/iframe_core_src.js
 - ignore:/js/iframe_mmenudom.js
-- ignore:/images/common/nav/nav1_corner.gif
-- ignore:/images/assistant/mailbox/email.jpg
-- ignore:/images/common/top/quicklink_c.gif
-- ignore:/images/common/top/logout_c.gif
-- ignore:/images/common/nav/nav1_bkgd.gif
-- ignore:/images/eJourney/ejy_icn.gif
-- ignore:/images/common/top/contactUs_c.gif
-- ignore:/images/common/icon/switch_off_menu.gif
-- ignore:/images/common/nav/nav1_l.gif
 - ignore:/js/iframe_menu_boc_c.js
-- ignore:/banner/rightButton.png
-- ignore:/images/common/iframe/nav1_left_c.gif
-- ignore:/images/common/iframe/nav1_right_c.gif
-- ignore:/banner/DEFAULT_IBS_LARGE_CHT.GIF
-- ignore:/images/common/btn/button_li_single_iFree.gif
-- ignore:/images/common/btn/button_arc_single_iFree.gif
-- ignore:/images/iFree_default.jpg
-- ignore:/images/common/iframe/nav_arrow.gif
-- ignore:/css/promote.css
+- ignore:/images/eJourney/ejy_icn.gif
+- ignore:/images/common/top/quicklink_c.gif
+- ignore:/images/common/nav/nav1_bkgd.gif
+- ignore:/images/common/nav/nav1_l.gif
+- ignore:/images/common/nav/nav1_corner.gif
+- ignore:/images/common/spacer.gif
+- ignore:/images/common/top/logout_c.gif
+- ignore:/images/assistant/mailbox/email.jpg
+- ignore:/images/common/icon/switch_off_menu.gif
+- ignore:/images/common/top/contactUs_c.gif
+- ignore:/images/common/icon/help.jpg
+- ignore:/images/promote/red_croner_right.gif
+- ignore:/images/common/btn/button_arc_single.gif
+- ignore:/images/common/title_bkgd.gif
+- ignore:/images/common/icon/print.jpg
+- ignore:/images/common/btn/button_li_single.gif
+- ignore:/images/common/btn/button_tb_li_ns.gif
 - ignore:/images/promote/red_backgroud.gif
 - ignore:/images/common/btn/button_tb_arc_ns.gif
-- ignore:/images/promote/red_croner_left.gif
-- ignore:/images/common/btn/button_tb_li_ns.gif
 - ignore:/images/common/icon/shortcut_add.gif
-- ignore:/images/promote/red_croner_right.gif
+- ignore:/images/common/icon/link_btn_normal_C.png
+- ignore:/images/common/iframe/nav1_left_c.gif
+- ignore:/images/promote/red_croner_left.gif
+- ignore:/images/common/iframe/nav1_right_c.gif
 - ignore:/images/common/nav/orange/nav2_bkgd.gif
 - ignore:/images/common/nav/orange/nav2_corner.gif
 - ignore:/images/common/nav/nav3_corner_right_on.gif
 - ignore:/images/common/nav/nav3_corner_left_on.gif
 - ignore:/images/common/nav/nav3_corner_right.gif
 - ignore:/images/common/nav/nav3_corner_left.gif
+- ignore:/images/common/iframe/nav_arrow.gif
 - ignore:/CnNbMainR.html
 - ignore:/js/globalVar.js
 - ignore:/js/Function.js
@@ -819,70 +1744,17 @@ x-path-templates:
 - ignore:/js/E2EE10K/sjcl.js
 - ignore:/js/E2EE10K/WPE2EE.js
 - ignore:/js/E2EE10K/ErrorCheck.js
-- ignore:/images/Bg_img3.jpg
-- ignore:/images/common/logo/wlbLogo.png
-- ignore:/images/DPS.png
-- ignore:/images/problem_web.png
-- ignore:/images/common/cssStyle/background/Bg_main_Left_leftsidebar.jpg
-- ignore:/images/common/cssStyle/background/Bg_Main_Left_Iitle.jpg
-- ignore:/images/common/cssStyle/icon/ico_leftSidebarMuneList.gif
-- ignore:/images/common/cssStyle/background/Bg_Header.jpg
-- ignore:/images/common/cssStyle/button/btnDelSmall.jpg
-- ignore:/images/common/cssStyle/background/Bg_High.jpg
-- ignore:/images/common/cssStyle/background/Bg_main_Left_leftContent.jpg
-- ignore:/images/common/cssStyle/button/btnAddSmall.jpg
-- ignore:/images/common/cssStyle/background/Bg_AllBg.jpg
-- ignore:/images/voice_captcha.png
-- ignore:/images/common/cssStyle/background/Bg_Main_Left_Bottom.jpg
-- ignore:/images/cn_rebBtnHover.jpg
-- ignore:/images/xx_tableTopBg.jpg
-- ignore:/images/xx_tableBottomBg.jpg
-- ignore:/images/common/cssStyle/button/btn_Redsubmit.jpg
 - ignore:/ibanking/Kaptcha.jpg
-- ignore:/images/common/cssStyle/icon/ico_leftSidebarMuneListhover.gif
-- ignore:/images/common/cssStyle/button/btn_Redsubmithover.jpg
 - ignore:/js/common/jquery-1.4.2.js
-- ignore:/images/cnLeftSideBarBotImg.jpg
-- ignore:/images/FixDep.jpg
-- ignore:/images/FoxChg.jpg
-- ignore:/images/SecOpn.jpg
-- ignore:/images/WelOpn.jpg
-- ignore:/images/IPO-icon.jpg
-- ignore:/images/greentab.jpg
 - ignore:/html/CnEnrollRewardPopwindow.html
 - ignore:/html/CnEnrolledRewardPopwin.html
 - ignore:/html/CnEnrollRewardAgreePopwindow.html
-- ignore:/images/common/icon/icoHome.gif
-- ignore:/images/common/icon/icoSpecification.png
-- ignore:/images/common/icon/icoPrint.png
-- ignore:/images/common/cssStyle/background/Bg_logout.gif
-- ignore:/enrollRewardstyle.css
-- ignore:/images/common/cssStyle/menu/Bg_mune.jpg
-- ignore:/style.css
-- ignore:/images/img.jpg
-- ignore:/images/Cn_btn_Close_off_r.jpg
-- ignore:/images/gift_icon.jpg
-- ignore:/images/warning.gif
-- ignore:/images/Cn_btn_AgreeandJoin_off.jpg
-- ignore:/images/common/cssStyle/menu/Bg_muneHover.jpg
-- ignore:/images/common/pageImages/Cn_IPO.jpg
-- ignore:/images/common/pageImages/banner1.png
-- ignore:/images/common/icon/pic1.jpg
-- ignore:/images/common/icon/pic2.jpg
-- ignore:/images/common/icon/search.gif
-- ignore:/images/common/icon/servertime2.png
-- ignore:/images/common/cssStyle/background/Bg_Main_Left_Iitle2.jpg
-- ignore:/images/common/cssStyle/background/Bg_MainContentBannerRedLine.jpg
-- ignore:/js/common/datepicker/css/datepicker.css
 - ignore:/js/common/jquery.jScroll.js
 - ignore:/js/common/datepicker.js
-- ignore:/images/common/cssStyle/background/Bg_dataTableTop.jpg
-- ignore:/images/common/cssStyle/background/Bg_dataTableBottom.jpg
 - ignore:/js/ui.tools.js
-- ignore:/images/common/icon/icotblops.gif
 x-balance-extraction-info:
   extracted_endpoints: 2
   supported_banks:
-  - boc_hk
   - cmb_wing_lung
+  - boc_hk
   extraction_timestamp: '2025-01-25T18:00:00Z'

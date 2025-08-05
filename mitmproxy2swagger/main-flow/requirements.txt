@@ -1,0 +1,13 @@
+# 独立API服务器依赖包
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+pydantic==2.5.0
+requests==2.31.0
+
+# mitmproxy相关（用于读取.mitm文件）
+mitmproxy>=8.0.0
+
+# 其他工具库
+python-json-logger==2.0.7
+aiofiles==23.2.1

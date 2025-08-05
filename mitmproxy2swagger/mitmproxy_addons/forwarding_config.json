@@ -1,0 +1,128 @@
+{
+  "version": "1.0.0",
+  "description": "mitmproxy定制化转发配置",
+  "last_updated": "2025-08-05 16:53:21",
+  "global_settings": {
+    "enable_logging": true,
+    "log_level": "INFO",
+    "log_file": "logs/forwarding_addon.log",
+    "enable_metrics": true,
+    "metrics_file": "logs/forwarding_metrics.json"
+  },
+  "url_filtering": {
+    "static_resources": {
+      "enabled": true,
+      "action": "block",
+      "patterns": [
+        "\\.(css|js|jpg|jpeg|png|gif|ico|svg|webp|woff|woff2|ttf|eot|otf)$",
+        "\\.(mp4|avi|mov|wmv|flv|mp3|wav|ogg)$",
+        "\\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar)$",
+        "/favicon\\.ico$",
+        "/robots\\.txt$",
+        "/sitemap\\.xml$",
+        "/static/.*",
+        "/assets/.*",
+        "/public/.*",
+        "/cdn/.*"
+      ]
+    },
+    "low_value_apis": {
+      "enabled": true,
+      "action": "log_only",
+      "patterns": [
+        "/health$",
+        "/ping$",
+        "/status$",
+        "/version$",
+        "/metrics$",
+        "/analytics/.*",
+        "/tracking/.*",
+        "/advertisement/.*",
+        "/ads/.*"
+      ]
+    },
+    "high_priority_apis": {
+      "enabled": true,
+      "action": "prioritize",
+      "patterns": [
+        ".*/balance.*",
+        ".*/account.*",
+        ".*/transaction.*",
+        ".*/payment.*",
+        ".*/transfer.*",
+        ".*/login.*",
+        ".*/auth.*",
+        ".*/api/.*"
+      ]
+    }
+  },
+  "forwarding_rules": {
+    "bank_apis": {
+      "enabled": false,
+      "description": "银行API精确转发规则 - 仅转发特定的域名+API路径组合",
+      "matching_mode": "domain_and_path",
+      "rules": []
+    },
+    "development_rules": {
+      "enabled": false,
+      "rules": [
+        {
+          "name": "本地开发环境",
+          "source_domains": [
+            "localhost",
+            "127.0.0.1",
+            "*.local"
+          ],
+          "target_host": "dev-api.local",
+          "target_port": 8080,
+          "preserve_headers": [
+            "Authorization"
+          ],
+          "add_headers": {
+            "X-Environment": "development"
+          }
+        }
+      ]
+    }
+  },
+  "response_modification": {
+    "enabled": true,
+    "rules": [
+      {
+        "name": "银行余额数据增强",
+        "url_patterns": [
+          ".*/balance.*",
+          ".*/account.*"
+        ],
+        "actions": [
+          {
+            "type": "add_header",
+            "header": "X-Balance-Enhanced",
+            "value": "true"
+          },
+          {
+            "type": "log_response",
+            "level": "INFO"
+          }
+        ]
+      }
+    ]
+  },
+  "security": {
+    "rate_limiting": {
+      "enabled": true,
+      "requests_per_minute": 100,
+      "burst_size": 20
+    },
+    "blocked_domains": [
+      "malicious-site.com",
+      "spam-domain.net"
+    ],
+    "allowed_domains": [
+      "bochk.com",
+      "cmbwinglungbank.com",
+      "localhost",
+      "127.0.0.1"
+    ]
+  }
+}
