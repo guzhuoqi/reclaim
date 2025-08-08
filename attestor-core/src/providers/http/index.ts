@@ -44,11 +44,11 @@ const HTTP_PROVIDER: Provider<'http'> = {
 	additionalClientOptions(params): TLSConnectionOptions {
 		// 🏦 银行兼容性：检测银行URL并使用特殊TLS配置
 		const isCMBWingLungBank = params.url?.includes('cmbwinglungbank.com')
-		
+
 		let defaultOptions: TLSConnectionOptions = {
 			applicationLayerProtocols : ['http/1.1']
 		}
-		
+
 		// 🏦 如果是招商永隆银行，使用Chrome兼容的TLS配置
 		if (isCMBWingLungBank) {
 			defaultOptions = {
@@ -56,7 +56,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 				...getBankCompatibleTlsOptions()
 			}
 		}
-		
+
 		if('additionalClientOptions' in params) {
 			defaultOptions = {
 				...defaultOptions,
@@ -87,7 +87,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 
 		// 🏦 银行兼容性：检测银行URL
 		const isCMBWingLungBank = params.url.includes('cmbwinglungbank.com')
-		
+
 		const hasUserAgent = Object.keys(pubHeaders)
 			.some(k => k.toLowerCase() === 'user-agent') ||
             Object.keys(secHeaders)
@@ -115,43 +115,43 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		const reqLine = `${params.method} ${pathname}${searchParams?.length ? '?' + searchParams : ''} HTTP/1.1`
 		const secHeadersList = buildHeaders(secHeaders)
 		logger.info({ requestLine: reqLine })
-		
+
 		// 🏦 银行兼容性：构建核心headers，避免重复
 		const coreHeaders = [reqLine]
-		
+
 		// 检查是否已存在Host头
 		const hasHost = [...Object.keys(pubHeaders), ...Object.keys(secHeaders)]
 			.some(k => k.toLowerCase() === 'host')
 		if (!hasHost) {
 			coreHeaders.push(`Host: ${getHostHeaderString(url)}`)
 		}
-		
+
 		// 🏦 动态添加Content-Length（只有当有body时）
 		const hasContentLength = [...Object.keys(pubHeaders), ...Object.keys(secHeaders)]
-			.some(k => k.toLowerCase() === 'content-length') 
+			.some(k => k.toLowerCase() === 'content-length')
 		if (contentLength > 0 && !hasContentLength) {
 			coreHeaders.push(`Content-Length: ${contentLength}`)
 		}
-		
+
 		// 🏦 银行兼容性：使用浏览器友好的headers
 		const hasConnection = [...Object.keys(pubHeaders), ...Object.keys(secHeaders)]
 			.some(k => k.toLowerCase() === 'connection')
 		if (!hasConnection) {
 			coreHeaders.push(isCMBWingLungBank ? 'Connection: keep-alive' : 'Connection: close')
 		}
-		
+
 		const hasAcceptEncoding = [...Object.keys(pubHeaders), ...Object.keys(secHeaders)]
 			.some(k => k.toLowerCase() === 'accept-encoding')
 		if (!hasAcceptEncoding) {
 			coreHeaders.push(isCMBWingLungBank ? 'Accept-Encoding: gzip, deflate, br, zstd' : 'Accept-Encoding: identity')
 		}
-		
+
 		// 🏦 银行兼容性：确保关键headers存在并正确排序
 		let allHeaders = [...coreHeaders]
-		
+
 		// 合并所有headers到Map中，确保不丢失任何header
 		const allHeadersMap = new Map()
-		
+
 		// 首先添加核心headers（包含动态生成的Host等）
 		coreHeaders.slice(1).forEach(header => { // 跳过请求行
 			const colonIndex = header.indexOf(':')
@@ -164,7 +164,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 				}
 			}
 		})
-		
+
 		// 然后添加配置中的headers
 		const addToMap = (headers: any) => {
 			Object.entries(headers).forEach(([key, value]) => {
@@ -176,10 +176,10 @@ const HTTP_PROVIDER: Provider<'http'> = {
 				}
 			})
 		}
-		
+
 		addToMap(pubHeaders)
 		addToMap(secHeaders)
-		
+
 		// 🔍 调试：检查最终Map中的Host头
 		if (allHeadersMap.has('host')) {
 			console.log(`🏠 最终Map中的Host头: ${allHeadersMap.get('host')}`)
@@ -187,21 +187,21 @@ const HTTP_PROVIDER: Provider<'http'> = {
 			console.log(`❌ 最终Map中没有Host头！`)
 			console.log(`📋 Map中的keys: ${Array.from(allHeadersMap.keys()).join(', ')}`)
 		}
-		
+
 		// 简化的headers处理：保持Host头修复但去掉Chrome精确排序
 		// 重置allHeaders为只包含请求行
 		allHeaders = [coreHeaders[0]]
-		
+
 		// 直接按Map顺序添加所有headers（已确保Host头不丢失）
 		allHeadersMap.forEach(header => allHeaders.push(header))
-		
+
 		const httpReqHeaderStr = [
 			...allHeaders,
 			'\r\n',
 		].join('\r\n')
 		const headerStr = strToUint8Array(httpReqHeaderStr)
 		const data = concatenateUint8Arrays([headerStr, body])
-		
+
 		// 🏦 DEBUG: 打印银行请求关键信息
 		if (isCMBWingLungBank) {
 			console.log('\n🏦 银行API请求 - 关键信息:')
@@ -352,13 +352,13 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		extractedParams = { ...extractedParams, ...newParams.extractedValues }
 
 		const req = getHttpRequestDataFromTranscript(receipt)
-		
+
 		// 🔍 调试：打印解析后的请求headers
 		console.log(`📋 DEBUG 解析后的请求headers:`)
 		console.log(`   headers对象:`, JSON.stringify(req.headers, null, 2))
 		console.log(`   headers的keys:`, Object.keys(req.headers))
 		console.log(`   headers的类型:`, typeof req.headers)
-		
+
 		if(req.method !== params.method.toLowerCase()) {
 			throw new Error(`Invalid method: ${req.method}`)
 		}
@@ -388,7 +388,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		// 🏦 银行兼容性：允许keep-alive连接
 		const isCMBWingLungBankRequest = params.url.includes('cmbwinglungbank.com')
 		const allowedConnections = isCMBWingLungBankRequest ? ['close', 'keep-alive'] : ['close']
-		
+
 		// 🔍 调试：打印Connection头信息
 		console.log(`🔗 DEBUG Connection头分析:`)
 		console.log(`   原始值: "${connectionHeader}" (类型: ${typeof connectionHeader})`)
@@ -398,7 +398,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		console.log(`   是否为银行请求: ${isCMBWingLungBankRequest}`)
 		console.log(`   允许的连接类型: [${allowedConnections.join(', ')}]`)
 		console.log(`   检查条件: connectionHeader=${!!connectionHeader}, 在允许列表中=${connectionHeader ? allowedConnections.includes(connectionHeader) : '跳过检查'}`)
-		
+
 		// 🔧 修复：当Connection头被redacted时跳过验证（数据已成功获取说明请求正确）
 		if(connectionHeader && !allowedConnections.includes(connectionHeader)) {
 			throw new Error(`Connection header must be one of [${allowedConnections.join(', ')}], got "${connectionHeader}"`)
@@ -477,15 +477,31 @@ const HTTP_PROVIDER: Provider<'http'> = {
 			res = res.slice(bodyStart).replace(/(\*){3,}/g, '')
 		}
 
+		// 🔍 调试：打印解密的应答内容
+		console.log(`📄 DEBUG 解密的应答内容分析:`)
+		console.log(`   应答长度: ${res.length}`)
+		console.log(`   应答前500字符: ${JSON.stringify(res.slice(0, 500))}`)
+		console.log(`   应答后500字符: ${JSON.stringify(res.slice(-500))}`)
+		console.log(`   responseMatches数量: ${params.responseMatches?.length || 0}`)
 
 		for(const { type, value, invert } of params.responseMatches || []) {
 			const inv = Boolean(invert) // explicitly cast to boolean
 
 			switch (type) {
 			case 'regex':
+				console.log(`🔍 DEBUG 测试正则表达式: "${value}"`)
 				const regexRes = makeRegex(value).exec(res)
 				const match = regexRes !== null
+				console.log(`   匹配结果: ${match}`)
+
+				if(match) {
+					console.log(`   匹配内容: ${JSON.stringify(regexRes)}`)
+					const groups = regexRes?.groups
+					console.log(`   命名捕获组: ${JSON.stringify(groups)}`)
+				}
+
 				if(match === inv) { // if both true or both false then fail
+					console.log(`❌ 正则表达式验证失败: match=${match}, invert=${inv}`)
 					throw new Error(
 						'Invalid receipt.'
 						+ ` Regex "${value}" ${invert ? 'matched' : "didn't match"}`
@@ -493,6 +509,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 				}
 
 				if(!match) {
+					console.log(`⚠️ 正则表达式未匹配，跳过`)
 					continue
 				}
 
@@ -503,6 +520,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 					}
 
 					extractedParams[paramName] = groups[paramName]
+					console.log(`✅ 提取参数: ${paramName} = "${groups[paramName]}"`)
 				}
 
 				break
@@ -534,6 +552,20 @@ const HTTP_PROVIDER: Provider<'http'> = {
 
 		}
 
+		// 🔍 调试：总结提取的参数
+		console.log(`📊 DEBUG 参数提取总结:`)
+		console.log(`   提取的参数数量: ${Object.keys(extractedParams).length}`)
+		console.log(`   提取的参数: ${JSON.stringify(extractedParams, null, 2)}`)
+
+		if(Object.keys(extractedParams).length === 0) {
+			console.log(`⚠️ 警告: 没有提取到任何参数！`)
+			console.log(`   可能原因:`)
+			console.log(`   1. 正则表达式与实际响应内容不匹配`)
+			console.log(`   2. 响应内容格式与预期不符`)
+			console.log(`   3. 命名捕获组配置有问题`)
+		}
+
+		console.log(`🎯 DEBUG 返回extractedParameters: ${JSON.stringify({ extractedParameters: extractedParams })}`)
 		return { extractedParameters: extractedParams }
 
 		function logTranscript() {

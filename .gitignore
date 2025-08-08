@@ -179,3 +179,17 @@ xxx.json
 
 # External projects (downloaded from independent repositories)
 zkme-express/
+/mitmproxy2swagger/data/integrated_pipeline_report_20250808.json
+/mitmproxy2swagger/data/integrated_pipeline_report_20250809.json
+/mitmproxy2swagger/data/questionable_apis_20250808.json
+/mitmproxy2swagger/data/questionable_apis_20250809.json
+/mitmproxy2swagger/data/reclaim_providers_20250808.json
+/mitmproxy2swagger/data/reclaim_providers_20250809.json
+/mitmproxy2swagger/mitmproxy_addons/data/attestor_db/index/index_2025-08-07.jsonl
+/mitmproxy2swagger/mitmproxy_addons/data/attestor_db/index/index_2025-08-08.jsonl
+/mitmproxy2swagger/mitmproxy_addons/data/attestor_db/requests/requests_2025-08-07.jsonl
+/mitmproxy2swagger/mitmproxy_addons/data/attestor_db/requests/requests_2025-08-08.jsonl
+/mitmproxy2swagger/mitmproxy_addons/data/attestor_db/responses/responses_2025-08-07.jsonl
+/mitmproxy2swagger/mitmproxy_addons/data/attestor_db/responses/responses_2025-08-08.jsonl
+/mitmproxy2swagger/mitmproxy_addons/data/task_sessions/sessions_2025-08-07.json
+/mitmproxy2swagger/mitmproxy_addons/data/task_sessions/sessions_2025-08-08.json

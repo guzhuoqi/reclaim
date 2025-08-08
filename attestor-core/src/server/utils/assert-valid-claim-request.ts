@@ -145,6 +145,7 @@ export async function assertValidProviderTranscript<T extends ProviderClaimInfo>
 		logger,
 		ctx: providerCtx
 	})
+	console.log(`🔍 DEBUG assertValidProviderReceipt返回值: ${JSON.stringify(rslt)}`)
 
 	ctx.providerHash = hashProviderParams(params)
 

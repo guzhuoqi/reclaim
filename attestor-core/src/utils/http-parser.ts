@@ -248,9 +248,31 @@ export function getHttpRequestDataFromTranscript(receipt: Transcript<Uint8Array>
 	const clientMsgs = receipt
 		.filter(s => s.sender === 'client')
 
+	// 🔍 调试：详细分析第一个客户端消息
+	console.log(`🔍 DEBUG TLS Transcript分析:`)
+	console.log(`   客户端消息总数: ${clientMsgs.length}`)
+
+	if(clientMsgs.length > 0) {
+		const firstMsg = clientMsgs[0]
+		console.log(`   第一个消息长度: ${firstMsg.message.length}`)
+		console.log(`   第一个字节: ${firstMsg.message[0]} (ASCII: ${String.fromCharCode(firstMsg.message[0])})`)
+		console.log(`   REDACTION_CHAR_CODE: ${REDACTION_CHAR_CODE} (ASCII: ${String.fromCharCode(REDACTION_CHAR_CODE)})`)
+		console.log(`   前20字节: ${Array.from(firstMsg.message.slice(0, 20)).map(b => String.fromCharCode(b)).join('')}`)
+		console.log(`   前20字节(hex): ${Array.from(firstMsg.message.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+
+		// 检查是否有任何非redacted的内容
+		const nonRedactedBytes = Array.from(firstMsg.message).filter(b => b !== REDACTION_CHAR_CODE)
+		console.log(`   非redacted字节数: ${nonRedactedBytes.length}/${firstMsg.message.length}`)
+
+		if(nonRedactedBytes.length > 0) {
+			console.log(`   部分非redacted内容: ${nonRedactedBytes.slice(0, 50).map(b => String.fromCharCode(b)).join('')}`)
+		}
+	}
+
 	// if the first message is redacted, we can't parse it
 	// as we don't know what the request was
 	if(clientMsgs[0].message[0] === REDACTION_CHAR_CODE) {
+		console.log(`❌ 第一个客户端消息被redacted，无法解析`)
 		throw new Error('First client message request is redacted. Cannot parse')
 	}
 
