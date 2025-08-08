@@ -77,15 +77,33 @@ export function createBgpListener(logger: Logger): BGPListener {
 	}
 
 	function onOpen(): void {
-		const subscriptionMessage = {
-			type: 'ris_subscribe',
-			data: {
-				type: 'UPDATE',
-			},
+		// 确保 WebSocket 完全打开后再发送消息
+		if (ws.readyState === ws.OPEN) {
+			const subscriptionMessage = {
+				type: 'ris_subscribe',
+				data: {
+					type: 'UPDATE',
+				},
+			}
+			ws.send(JSON.stringify(subscriptionMessage))
+			logger.info('connected to BGP websocket')
+		} else {
+			// 如果还没完全打开，稍后重试
+			setTimeout(() => {
+				if (ws.readyState === ws.OPEN) {
+					const subscriptionMessage = {
+						type: 'ris_subscribe',
+						data: {
+							type: 'UPDATE',
+						},
+					}
+					ws.send(JSON.stringify(subscriptionMessage))
+					logger.info('connected to BGP websocket')
+				} else {
+					logger.warn('BGP websocket not ready after timeout')
+				}
+			}, 100)
 		}
-		ws.send(JSON.stringify(subscriptionMessage))
-
-		logger.info('connected to BGP websocket')
 	}
 
 	function onClose(err?: Error) {
