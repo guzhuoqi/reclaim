@@ -192,19 +192,24 @@ def sort_providers_by_time(providers_array: List[Dict], reverse: bool = True) ->
     Returns:
         排序后的Provider数组
     """
+    from datetime import datetime, timezone
+
     def get_provider_timestamp(provider):
         try:
             # 从metadata中获取生成时间
             generated_at = provider.get('providerConfig', {}).get('providerConfig', {}).get('metadata', {}).get('generated_at', '')
             if generated_at:
-                # 解析ISO格式时间戳
-                from datetime import datetime
-                return datetime.fromisoformat(generated_at.replace('Z', '+00:00'))
+                # 解析ISO格式时间戳，确保时区一致
+                dt = datetime.fromisoformat(generated_at.replace('Z', '+00:00'))
+                # 如果是timezone-aware，转换为UTC
+                if dt.tzinfo is not None:
+                    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+                return dt
             else:
-                # 如果没有时间戳，使用当前时间
+                # 如果没有时间戳，使用当前时间（timezone-naive）
                 return datetime.now()
         except:
-            # 解析失败时使用当前时间
+            # 解析失败时使用当前时间（timezone-naive）
             return datetime.now()
 
     # 按时间排序
@@ -502,10 +507,20 @@ async def trigger_pipeline(request: TriggerRequest):
             if providers_file and os.path.exists(providers_file):
                 with open(providers_file, 'r', encoding='utf-8') as f:
                     providers_data = json.load(f)
-                    # 直接返回providers列表
+                    # 处理providers数据
                     if isinstance(providers_data, dict) and 'providers' in providers_data:
-                        raw_providers = providers_data['providers']
+                        providers_section = providers_data['providers']
                         providers_response['metadata'] = providers_data.get('metadata', {})
+
+                        # 转换索引格式为数组格式
+                        if isinstance(providers_section, dict):
+                            # 新的索引格式：providers是对象，以providerId为key
+                            raw_providers = list(providers_section.values())
+                        elif isinstance(providers_section, list):
+                            # 旧的数组格式
+                            raw_providers = providers_section
+                        else:
+                            raw_providers = []
                     elif isinstance(providers_data, list):
                         raw_providers = providers_data
                     else:
@@ -646,9 +661,19 @@ async def get_providers():
         with open(latest_file, 'r', encoding='utf-8') as f:
             providers_data = json.load(f)
 
-        # 提取providers数组和元数据
-        providers_array = providers_data.get('providers', [])
+        # 提取providers数据和元数据
+        providers_data_section = providers_data.get('providers', {})
         metadata = providers_data.get('metadata', {})
+
+        # 转换索引格式为数组格式
+        if isinstance(providers_data_section, dict):
+            # 新的索引格式：providers是对象，以providerId为key
+            providers_array = list(providers_data_section.values())
+        elif isinstance(providers_data_section, list):
+            # 旧的数组格式
+            providers_array = providers_data_section
+        else:
+            providers_array = []
 
         # 使用统一排序函数进行倒序排序，最新的放在前面
         sorted_providers = sort_providers_by_time(providers_array, reverse=True)
@@ -770,30 +795,57 @@ async def download_file(file_type: str, filename: str):
 
 def main():
     """启动API服务器"""
-    # 动态获取本机IP
-    local_ip = get_local_ip()
-    port = 8000
+    # 从环境变量获取配置，如果没有则使用默认值
+    host = os.getenv("API_SERVER_HOST", "0.0.0.0")
+    port = int(os.getenv("API_SERVER_PORT", "8000"))
+    local_ip = os.getenv("API_SERVER_LOCAL_IP") or get_local_ip()
 
     print("🚀 启动银行Provider生成API服务器")
     print("=" * 70)
     print(f"📍 本机IP地址: {local_ip}")
-    print(f"🌐 服务地址: http://{local_ip}:{port}")
+    print(f"🌐 绑定地址: {host}:{port}")
+    print(f"🔗 访问地址: http://{local_ip}:{port}")
     print(f"📖 API文档: http://{local_ip}:{port}/docs")
     print(f"🔍 健康检查: http://{local_ip}:{port}/health")
     print(f"🧪 测试界面: 打开 api_test_client.html")
     print("=" * 70)
     print("💡 这是一个独立的API服务，不依赖mitmproxy插件")
+
+    # 显示网络配置信息
+    if host == "0.0.0.0":
+        print("🌐 监听所有网络接口 (可通过本机IP和localhost访问)")
+    elif host == local_ip:
+        print("🏠 仅监听本机IP (不可通过localhost访问)")
+    elif host == "127.0.0.1":
+        print("🔒 仅监听localhost (仅本机可访问)")
+    else:
+        print(f"🎯 监听指定地址: {host}")
+
     print("🛑 按 Ctrl+C 停止服务")
     print()
 
-    # 启动服务器，监听所有接口
-    uvicorn.run(
-        "independent_api_server:app",
-        host="0.0.0.0",
-        port=port,
-        reload=False,
-        log_level="info"
-    )
+    # 启动服务器
+    try:
+        uvicorn.run(
+            "independent_api_server:app",
+            host=host,
+            port=port,
+            reload=False,
+            log_level="info"
+        )
+    except OSError as e:
+        if "Address already in use" in str(e):
+            print(f"❌ 端口 {port} 已被占用")
+            print(f"💡 请使用其他端口或停止占用该端口的进程")
+            print(f"💡 查看占用进程: lsof -i :{port}")
+        else:
+            print(f"❌ 启动服务器失败: {e}")
+        exit(1)
+    except KeyboardInterrupt:
+        print("\n🛑 服务器已停止")
+    except Exception as e:
+        print(f"❌ 服务器异常: {e}")
+        exit(1)
 
 
 if __name__ == "__main__":

@@ -18,19 +18,19 @@ try:
 except:
     pass
 " 2>/dev/null)
-    
+
     if [ ! -z "$ip" ]; then
         echo "$ip"
         return
     fi
-    
+
     # 方法2: 通过ifconfig获取活跃网络接口的IP
     ip=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | grep broadcast | head -1 | awk '{print $2}')
     if [ ! -z "$ip" ]; then
         echo "$ip"
         return
     fi
-    
+
     # 方法3: 获取所有非localhost的IP，优先返回内网IP
     local all_ips=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}')
     for ip in $all_ips; do
@@ -39,7 +39,7 @@ except:
             return
         fi
     done
-    
+
     # 备用：返回第一个非localhost IP
     echo "$all_ips" | head -1
 }
@@ -54,14 +54,52 @@ fi
 
 echo "📍 检测到本机IP: $LOCAL_IP"
 
-# 设置代理端口
-PROXY_PORT=9999
+# 自动检测代理端口
+detect_proxy_port() {
+    echo "🔍 自动检测代理端口..." >&2
+
+    # 常用的代理端口列表
+    local common_ports=(9999 8080 8081 8888 3128 8000 9000)
+
+    # 首先检查是否有mitmproxy相关进程
+    local mitm_ports=$(ps aux | grep -E "(mitmproxy|mitmweb|mitmdump)" | grep -v grep | grep -oE "listen-port [0-9]+" | awk '{print $2}' | head -1)
+    if [ ! -z "$mitm_ports" ]; then
+        echo "📡 发现mitmproxy进程使用端口: $mitm_ports" >&2
+        common_ports=($mitm_ports "${common_ports[@]}")
+    fi
+
+    # 检查netstat输出中的监听端口
+    local listening_ports=$(netstat -an | grep LISTEN | grep -E ":(8080|8081|8888|9999|3128|8000|9000)" | awk -F: '{print $NF}' | awk '{print $1}' | sort -u)
+    if [ ! -z "$listening_ports" ]; then
+        echo "📡 发现监听的代理端口: $listening_ports" >&2
+        for port in $listening_ports; do
+            common_ports=($port "${common_ports[@]}")
+        done
+    fi
+
+    # 逐个测试端口
+    for port in "${common_ports[@]}"; do
+        echo "   测试端口 $port..." >&2
+        if nc -z $LOCAL_IP $port 2>/dev/null; then
+            echo "✅ 找到可用的代理端口: $port" >&2
+            echo "$port"
+            return
+        fi
+    done
+
+    # 如果都没找到，返回默认端口
+    echo "⚠️  未找到可用的代理端口，使用默认端口 9999" >&2
+    echo "9999"
+}
+
+# 检测代理端口
+PROXY_PORT=$(detect_proxy_port)
 PROXY_URL="http://${LOCAL_IP}:${PROXY_PORT}"
 
 echo "🔗 代理服务器地址: $PROXY_URL"
 
-# 检查代理服务器是否可用
-echo "🔍 检查代理服务器连接..."
+# 最终验证代理服务器是否可用
+echo "🔍 验证代理服务器连接..."
 if nc -z $LOCAL_IP $PROXY_PORT 2>/dev/null; then
     echo "✅ 代理服务器 $LOCAL_IP:$PROXY_PORT 可访问"
 else

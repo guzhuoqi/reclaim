@@ -9,9 +9,14 @@
   },
   "dependencies": {
     "@reclaimprotocol/attestor-core": "latest",
-    "ethers": "^6.0.0"
+    "ethers": "^5.8.0"
   },
-  "keywords": ["reclaim", "attestor", "claim", "frontend"],
+  "keywords": [
+    "reclaim",
+    "attestor",
+    "claim",
+    "frontend"
+  ],
   "author": "",
   "license": "MIT"
-} 
+}
