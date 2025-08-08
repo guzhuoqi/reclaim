@@ -1,0 +1,1141 @@
+#!/usr/bin/env python3
+"""
+Attestor集成转发Addon
+Attestor Integration Forwarding Addon for mitmproxy
+
+功能特性：
+1. 智能请求识别 - 识别需要通过attestor处理的API请求
+2. 参数转换 - 将HTTP请求转换为attestor调用参数
+3. 异步执行 - 异步调用attestor node生成ZK proof
+4. 响应处理 - 处理attestor返回结果并生成响应
+5. 错误处理 - 完善的错误处理和降级机制
+
+使用方式：
+    mitmproxy -s attestor_forwarding_addon.py
+    mitmweb -s attestor_forwarding_addon.py
+"""
+
+import asyncio
+import json
+import logging
+import os
+import subprocess
+import time
+from collections import defaultdict, deque
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Any, Tuple
+from urllib.parse import urlparse
+import threading
+import queue
+from attestor_db import get_attestor_db
+import requests
+
+from mitmproxy import http, ctx
+from mitmproxy.addonmanager import Loader
+
+# 导入我们的转换器
+try:
+    from http_to_attestor_converter import HttpToAttestorConverter
+except ImportError:
+    print("❌ 无法导入 HttpToAttestorConverter，请确保文件在同一目录下")
+    raise
+
+# 导入新的session-based匹配器
+try:
+    from session_based_matcher import get_session_matcher
+except ImportError:
+    print("❌ 无法导入 SessionBasedMatcher，请确保文件在同一目录下")
+    raise
+
+
+class AttestorExecutor:
+    """Attestor API执行器"""
+
+    def __init__(self, api_host: str = "localhost", api_port: int = 3000, max_workers: int = 3):
+        self.api_host = api_host
+        self.api_port = api_port
+        self.max_workers = max_workers
+        self.executor_queue = queue.Queue(maxsize=max_workers)
+        self.active_tasks = {}
+        self.task_counter = 0
+
+        # 初始化数据库
+        self.db = get_attestor_db()
+        print(f"📊 Attestor 数据库已初始化: {self.db.base_dir}")
+
+        # 初始化工作线程
+        for i in range(max_workers):
+            worker = threading.Thread(target=self._worker_thread, daemon=True)
+            worker.start()
+
+    def _worker_thread(self):
+        """工作线程"""
+        while True:
+            try:
+                task = self.executor_queue.get(timeout=1)
+                if task is None:  # 停止信号
+                    self.executor_queue.task_done()
+                    break
+                self._execute_task(task)
+                self.executor_queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"❌ Worker thread error: {e}")
+                self.executor_queue.task_done()
+
+    def _execute_task(self, task: Dict[str, Any]):
+        """执行attestor任务 - 通过子进程直接调用 Node.js"""
+        task_id = task["task_id"]
+        attestor_params = task["attestor_params"]
+        callback = task["callback"]
+
+        # 保存请求到数据库
+        request_data = {
+            "task_id": task_id,
+            "url": attestor_params["params"].get("url"),
+            "method": attestor_params["params"].get("method"),
+            "attestor_params": attestor_params
+        }
+        self.db.save_request(task_id, request_data)
+
+        try:
+            start_time = time.time()
+            print(f"🚀 开始执行Attestor任务 {task_id} (通过子进程调用Node.js)...")
+            print(f"💾 请求已保存到数据库")
+
+            # 构建命令行参数 - 使用编译后的 JavaScript 文件
+            attestor_script = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "attestor-core/lib/scripts/generate-receipt-for-python.js"
+            )
+
+            # 准备参数
+            params_json = json.dumps(attestor_params["params"])
+            secret_params_json = json.dumps(attestor_params["secretParams"])
+
+            # 使用 shell 重定向将调试输出重定向到 /dev/null
+            import shlex
+            cmd_str = f"cd {shlex.quote(os.path.dirname(os.path.dirname(attestor_script)))} && node {shlex.quote(attestor_script)} --params {shlex.quote(params_json)} --secretParams {shlex.quote(secret_params_json)} --attestor local 2>/dev/null"
+
+            print(f"   执行命令: node generate-receipt-for-python.js [参数已隐藏]")
+            print(f"   工作目录: {os.path.dirname(os.path.dirname(attestor_script))}")  # attestor-core 根目录
+
+            # 设置环境变量
+            env = dict(os.environ)
+            env['PRIVATE_KEY'] = '0x0123788edad59d7c013cdc85e4372f350f828e2cec62d9a2de4560e69aec7f89'
+            env['NODE_ENV'] = 'development'
+
+            # 使用 Popen + communicate() 来避免 65536 字节缓冲区限制
+            print(f"   使用 Popen + communicate() 避免输出截断...")
+
+            try:
+                process = subprocess.Popen(
+                    cmd_str,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env
+                )
+
+                # 使用 communicate() 获取完整输出，无大小限制
+                stdout, stderr = process.communicate(timeout=180)
+
+                # 创建兼容的 result 对象
+                class PopenResult:
+                    def __init__(self, returncode, stdout, stderr):
+                        self.returncode = returncode
+                        self.stdout = stdout
+                        self.stderr = stderr
+
+                result = PopenResult(process.returncode, stdout, stderr)
+                print(f"   ✅ 获取完整输出: stdout={len(stdout)} 字符, stderr={len(stderr)} 字符")
+
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate()
+                result = PopenResult(process.returncode, stdout, stderr)
+                raise subprocess.TimeoutExpired(cmd_str, 180)
+
+            execution_time = time.time() - start_time
+
+            print(f"   进程返回码: {result.returncode}")
+            print(f"   执行时间: {execution_time:.2f}秒")
+            print(f"   stdout长度: {len(result.stdout) if result.stdout else 0}")
+            print(f"   stderr长度: {len(result.stderr) if result.stderr else 0}")
+
+            if result.returncode == 0 and result.stdout:
+                try:
+                    # 解析 JSON 输出
+                    attestor_response = json.loads(result.stdout.strip())
+                    print(f"   解析JSON成功: {attestor_response.get('success', False)}")
+
+                    if attestor_response.get("success"):
+                        # 成功情况
+                        response_data = {
+                            "success": True,
+                            "receipt": attestor_response.get("receipt"),
+                            "task_id": task_id,
+                            "execution_time": execution_time,
+                            "timestamp": attestor_response.get("timestamp")
+                        }
+
+                        # 提取 extractedParameters
+                        receipt = attestor_response.get("receipt", {})
+                        if receipt.get("claim") and receipt["claim"].get("context"):
+                            try:
+                                context = json.loads(receipt["claim"]["context"])
+                                if context.get("extractedParameters"):
+                                    response_data["extractedParameters"] = context["extractedParameters"]
+                                    print(f"   提取的参数: {context['extractedParameters']}")
+                            except Exception as parse_error:
+                                print(f"   解析context失败: {parse_error}")
+
+                        print(f"✅ Attestor任务 {task_id} 执行成功 (耗时: {execution_time:.2f}秒)")
+
+                        # 保存成功响应到数据库
+                        self.db.save_response(task_id, response_data, execution_time)
+                        print(f"💾 成功响应已保存到数据库")
+
+                    else:
+                        # Attestor 返回错误
+                        response_data = {
+                            "success": False,
+                            "error": attestor_response.get("error", "Unknown attestor error"),
+                            "task_id": task_id,
+                            "execution_time": execution_time
+                        }
+                        print(f"❌ Attestor任务 {task_id} 返回错误: {attestor_response.get('error')}")
+
+                        # 保存错误响应到数据库
+                        self.db.save_response(task_id, response_data, execution_time)
+                        print(f"💾 错误响应已保存到数据库")
+
+                except json.JSONDecodeError as e:
+                    # JSON 解析失败
+                    response_data = {
+                        "success": False,
+                        "error": f"JSON parse error: {e}",
+                        "raw_stdout": result.stdout[:500],  # 只保留前500字符
+                        "task_id": task_id,
+                        "execution_time": execution_time
+                    }
+                    print(f"❌ Attestor任务 {task_id} JSON解析失败: {e}")
+                    print(f"   原始输出: {result.stdout[:200]}...")
+
+                    # 保存JSON解析错误到数据库
+                    self.db.save_response(task_id, response_data, execution_time)
+                    print(f"💾 JSON解析错误已保存到数据库")
+
+            else:
+                # 进程执行失败
+                response_data = {
+                    "success": False,
+                    "error": f"Process failed with code {result.returncode}",
+                    "stderr": result.stderr,
+                    "stdout": result.stdout,
+                    "task_id": task_id,
+                    "execution_time": execution_time
+                }
+                print(f"❌ Attestor任务 {task_id} 进程执行失败 (返回码: {result.returncode})")
+                if result.stderr:
+                    print(f"   错误输出: {result.stderr}")
+
+                # 保存进程执行失败到数据库
+                self.db.save_response(task_id, response_data, execution_time)
+                print(f"💾 进程执行失败已保存到数据库")
+
+        except subprocess.TimeoutExpired:
+            execution_time = time.time() - start_time
+            response_data = {
+                "success": False,
+                "error": "Process timeout",
+                "task_id": task_id,
+                "execution_time": execution_time
+            }
+            print(f"⏰ Attestor任务 {task_id} 进程超时")
+
+            # 保存超时错误到数据库
+            self.db.save_response(task_id, response_data, execution_time)
+            print(f"💾 超时错误已保存到数据库")
+
+        except Exception as e:
+            execution_time = time.time() - start_time
+            response_data = {
+                "success": False,
+                "error": str(e),
+                "task_id": task_id,
+                "execution_time": execution_time
+            }
+            print(f"❌ Attestor任务 {task_id} 执行异常: {e}")
+
+            # 保存异常错误到数据库
+            self.db.save_response(task_id, response_data, execution_time)
+            print(f"💾 异常错误已保存到数据库")
+
+        # 调用回调
+        callback(response_data)
+
+    def submit_task(self, attestor_params: Dict[str, Any], callback) -> str:
+        """提交attestor任务"""
+        self.task_counter += 1
+        task_id = f"task_{self.task_counter}_{int(time.time())}"
+
+        task = {
+            "task_id": task_id,
+            "attestor_params": attestor_params,
+            "callback": callback,
+            "submitted_at": time.time()
+        }
+
+        self.active_tasks[task_id] = task
+
+        try:
+            print(f"📝 提交Attestor任务 {task_id} 到队列（当前队列大小: {self.executor_queue.qsize()}）")
+            self.executor_queue.put(task, timeout=5)  # 增加超时时间
+            print(f"✅ Attestor任务 {task_id} 已成功提交到队列")
+            return task_id
+        except queue.Full:
+            del self.active_tasks[task_id]
+            print(f"❌ 队列已满，无法提交任务 {task_id}")
+            raise Exception("Attestor executor queue is full")
+
+
+class AttestorForwardingAddon:
+    """Attestor集成转发Addon主类"""
+
+    def __init__(self):
+        self.config: Dict[str, Any] = {}
+        self.logger: Optional[logging.Logger] = None
+        self.converter = HttpToAttestorConverter()
+        self.executor: Optional[AttestorExecutor] = None
+        self.pending_responses: Dict[str, http.HTTPFlow] = {}
+        self.metrics: Dict[str, Any] = defaultdict(int)
+
+        # 初始化session-based匹配器
+        self.session_matcher = get_session_matcher()
+        print("✅ AttestorForwardingAddon 已集成 SessionBasedMatcher")
+
+        # 加载配置
+        self._load_config()
+        self._setup_logging()
+        self._setup_executor()
+
+        # 启动清理线程
+        self._start_cleanup_thread()
+
+    def _start_cleanup_thread(self):
+        """启动定期清理线程"""
+        def cleanup_worker():
+            while True:
+                try:
+                    time.sleep(30)  # 每30秒检查一次
+                    current_time = time.time()
+
+                    # 清理超过5分钟的pending responses
+                    expired_tasks = []
+                    for task_id, flow in self.pending_responses.items():
+                        # 假设任务ID包含时间戳
+                        try:
+                            task_timestamp = int(task_id.split('_')[-1])
+                            if current_time - task_timestamp > 300:  # 5分钟
+                                expired_tasks.append(task_id)
+                        except:
+                            # 如果解析时间戳失败，也清理掉
+                            if len(expired_tasks) < 10:  # 限制一次清理的数量
+                                expired_tasks.append(task_id)
+
+                    for task_id in expired_tasks:
+                        print(f"🧹 清理过期任务: {task_id}")
+                        del self.pending_responses[task_id]
+
+                except Exception as e:
+                    print(f"❌ 清理线程异常: {e}")
+
+        cleanup_thread = threading.Thread(target=cleanup_worker, daemon=True)
+        cleanup_thread.start()
+
+    def _load_config(self):
+        """加载配置文件"""
+        config_path = Path(__file__).parent / "attestor_forwarding_config.json"
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                self.config = json.load(f)
+            print(f"✅ 加载Attestor转发配置: {config_path}")
+        except Exception as e:
+            print(f"❌ 加载配置文件失败: {e}")
+            # 使用默认配置
+            self.config = self._get_default_config()
+
+    def _get_default_config(self) -> Dict[str, Any]:
+        """获取默认配置"""
+        return {
+            "global_settings": {
+                "enable_logging": True,
+                "log_level": "INFO",
+                "attestor_core_path": "../attestor-core",
+                "max_workers": 3,
+                "request_timeout": 180
+            },
+            "attestor_rules": {
+                "enabled": True,
+                "rules": [
+                    {
+                        "name": "银行余额查询",
+                        "domains": ["*.cmbwinglungbank.com"],
+                        "paths": ["/ibanking/.*"],
+                        "methods": ["POST", "GET"],
+                        "response_patterns": {
+                            "hkd_balance": r"HKD[^\\d]*(\\d[\\d,]*\\.\\d{2})",
+                            "usd_balance": r"USD[^\\d]*(\\d[\\d,]*\\.\\d{2})"
+                        },
+                        "geo_location": "HK"
+                    }
+                ]
+            },
+            "response_settings": {
+                "include_original_response": True,
+                "include_attestor_proof": True,
+                "response_format": "json"
+            }
+        }
+
+    def _setup_logging(self):
+        """设置日志"""
+        if not self.config.get("global_settings", {}).get("enable_logging", True):
+            return
+
+        log_level = self.config.get("global_settings", {}).get("log_level", "INFO")
+        log_file = "logs/attestor_forwarding.log"
+
+        # 确保日志目录存在
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+
+        self.logger = logging.getLogger("AttestorForwardingAddon")
+        self.logger.setLevel(getattr(logging, log_level))
+
+        # 文件处理器
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(getattr(logging, log_level))
+
+        # 格式化器
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        file_handler.setFormatter(formatter)
+
+        self.logger.addHandler(file_handler)
+        self.logger.info("AttestorForwardingAddon 初始化完成")
+
+    def _setup_executor(self):
+        """设置执行器"""
+        max_workers = self.config.get("global_settings", {}).get("max_workers", 3)
+        api_host = self.config.get("global_settings", {}).get("zkme_express_host", "localhost")
+        api_port = self.config.get("global_settings", {}).get("zkme_express_port", 3000)
+
+        try:
+            self.executor = AttestorExecutor(api_host, api_port, max_workers)
+            print(f"✅ Attestor执行器初始化完成: {api_host}:{api_port}")
+        except Exception as e:
+            print(f"❌ Attestor执行器初始化失败: {e}")
+
+    def load(self, loader: Loader):
+        """mitmproxy加载时调用"""
+        loader.add_option(
+            name="attestor_enabled",
+            typespec=bool,
+            default=True,
+            help="是否启用Attestor转发功能"
+        )
+
+        loader.add_option(
+            name="attestor_config",
+            typespec=str,
+            default="",
+            help="Attestor转发配置文件路径"
+        )
+
+    def request(self, flow: http.HTTPFlow) -> None:
+        """处理HTTP请求"""
+        if not ctx.options.attestor_enabled:
+            return
+
+        # 更新指标
+        self.metrics["total_requests"] += 1
+
+        # 🎯 第一个功能点：检查pending sessions并尝试匹配
+        session_match = self.session_matcher.check_pending_sessions_and_match(flow)
+
+        if session_match:
+            print(f"🎯 Session匹配成功！处理session-based attestor调用")
+            self._process_session_based_attestor(flow, session_match)
+            return
+
+        # 原有逻辑：检查是否需要通过attestor处理
+        if self._should_process_with_attestor(flow):
+            self._process_with_attestor(flow)
+        else:
+            # 对于不需要attestor处理的请求，直接放行
+            pass
+
+        # 记录日志
+        if self.logger:
+            self.logger.info(f"处理请求: {flow.request.method} {flow.request.pretty_url}")
+
+    def _should_process_with_attestor(self, flow: http.HTTPFlow) -> bool:
+        """判断是否需要通过attestor处理"""
+        attestor_rules = self.config.get("attestor_rules", {})
+        if not attestor_rules.get("enabled", False):
+            return False
+
+        host = flow.request.host
+        path = urlparse(flow.request.pretty_url).path
+        method = flow.request.method
+
+        # 调试输出
+        print(f"🔍 检查请求: {method} {host}{path}")
+
+        for rule in attestor_rules.get("rules", []):
+            # 检查规则是否启用
+            if not rule.get("enabled", True):
+                continue
+
+            # 检查域名匹配
+            domains = rule.get("domains", [])
+            if not self._match_domains(host, domains):
+                continue
+
+            # 检查路径匹配
+            paths = rule.get("paths", [])
+            if paths and not self._match_paths(path, paths):
+                continue
+
+            # 检查方法匹配
+            methods = rule.get("methods", [])
+            if methods and method not in methods:
+                continue
+
+            # 检查必需参数匹配
+            required_params = rule.get("required_params", [])
+            if required_params and not self._match_required_params(flow.request.pretty_url, required_params):
+                print(f"⚪ 跳过请求（参数不匹配）: {method} {host}{path}")
+                continue
+
+            # 所有条件匹配
+            print(f"✅ 匹配规则: {rule.get('name', 'Unknown')} - {method} {host}{path}")
+            return True
+
+        print(f"⚪ 跳过请求: {method} {host}{path}")
+        return False
+
+    def _match_domains(self, host: str, domains: List[str]) -> bool:
+        """匹配域名"""
+        for domain in domains:
+            if domain.startswith("*."):
+                # 通配符匹配
+                base_domain = domain[2:]
+                if host.endswith(base_domain):
+                    return True
+            elif host == domain:
+                return True
+        return False
+
+    def _match_paths(self, path: str, paths: List[str]) -> bool:
+        """匹配路径"""
+        import re
+        for path_pattern in paths:
+            try:
+                if re.search(path_pattern, path):
+                    return True
+            except re.error:
+                # 如果正则表达式无效，尝试前缀匹配
+                if path.startswith(path_pattern):
+                    return True
+        return False
+
+    def _match_required_params(self, url: str, required_params: List[str]) -> bool:
+        """匹配必需参数"""
+        for param in required_params:
+            if param not in url:
+                return False
+        return True
+
+    def _process_with_attestor(self, flow: http.HTTPFlow):
+        """通过attestor处理请求"""
+        try:
+            # 找到匹配的规则
+            rule = self._find_matching_rule(flow)
+            if not rule:
+                # 如果没有匹配的规则，直接放行
+                return
+
+            # 只有明确匹配的请求才进行attestor处理
+            print(f"🎯 Attestor处理请求: {flow.request.method} {flow.request.pretty_url}")
+            print(f"   Headers: {dict(flow.request.headers)}")
+            print(f"   Body: {flow.request.content.decode('utf-8', errors='ignore')[:200] if flow.request.content else 'Empty'}")
+
+            # 转换为attestor参数
+            attestor_params = self._convert_to_attestor_params(flow, rule)
+
+            print(f"   转换后的参数:")
+            print(f"   - URL: {attestor_params['params']['url']}")
+            print(f"   - Method: {attestor_params['params']['method']}")
+            print(f"   - Basic Headers: {attestor_params['params']['headers']}")
+            print(f"   - Secret Headers: {list(attestor_params['secretParams'].get('headers', {}).keys())}")
+            print(f"   - Cookie: {'Yes' if attestor_params['secretParams'].get('cookieStr') else 'No'}")
+            print(f"   - Response Patterns: {attestor_params['params'].get('responseMatches', [])}")
+
+            # 创建响应回调
+            def response_callback(result: Dict[str, Any]):
+                self._handle_attestor_response(flow, result, rule)
+
+            # 提交任务（直接传递attestor_params，不再生成命令行）
+            task_id = self.executor.submit_task(attestor_params, response_callback)
+
+            # 暂时阻塞请求，返回处理中的响应
+            flow.response = http.Response.make(
+                202,  # Accepted
+                json.dumps({
+                    "status": "processing",
+                    "message": "Request is being processed with attestor",
+                    "task_id": task_id,
+                    "url": flow.request.pretty_url,
+                    "rule": rule.get("name", "Unknown")
+                }).encode(),
+                {"Content-Type": "application/json"}
+            )
+
+            # 记录待处理的响应
+            self.pending_responses[task_id] = flow
+
+            self.metrics["attestor_requests"] += 1
+
+            if self.logger:
+                self.logger.info(f"Attestor处理请求: {task_id} - {flow.request.pretty_url}")
+
+        except Exception as e:
+            # 错误处理 - 但不阻止正常转发
+            print(f"❌ Attestor处理异常: {e}")
+
+            if self.logger:
+                self.logger.error(f"Attestor处理失败: {e}")
+
+            self.metrics["attestor_errors"] += 1
+
+            # 不设置错误响应，让请求正常转发
+
+    def _find_matching_rule(self, flow: http.HTTPFlow) -> Optional[Dict[str, Any]]:
+        """找到匹配的规则"""
+        host = flow.request.host
+        path = urlparse(flow.request.pretty_url).path
+        method = flow.request.method
+
+        for rule in self.config.get("attestor_rules", {}).get("rules", []):
+            if (rule.get("enabled", True) and
+                self._match_domains(host, rule.get("domains", [])) and
+                self._match_paths(path, rule.get("paths", [])) and
+                (not rule.get("methods") or method in rule.get("methods", [])) and
+                (not rule.get("required_params") or self._match_required_params(flow.request.pretty_url, rule.get("required_params", [])))):
+                return rule
+
+        return None
+
+    def _convert_to_attestor_params(self, flow: http.HTTPFlow, rule: Dict[str, Any]) -> Dict[str, Any]:
+        """转换为attestor参数"""
+        # 获取规则中的响应模式和地理位置
+        response_patterns = rule.get("response_patterns", {})
+        geo_location = rule.get("geo_location", "HK")
+
+        # 使用转换器
+        attestor_params = self.converter.convert_flow_to_attestor_params(
+            flow,
+            geo_location=geo_location,
+            custom_patterns=response_patterns
+        )
+
+        return attestor_params
+
+    def _handle_attestor_response(self, flow: http.HTTPFlow, result: Dict[str, Any], rule: Dict[str, Any]):
+        """处理attestor响应"""
+        task_id = result.get("task_id")
+
+        # 检查连接状态
+        if task_id not in self.pending_responses:
+            print(f"⚠️  任务 {task_id} 未找到，跳过响应处理")
+            return
+
+        # 检查是否是断开的连接
+        connection_closed = self.pending_responses[task_id] == "CONNECTION_CLOSED"
+
+        try:
+            if result.get("success"):
+                # 成功情况 - 直接使用子进程返回的结构化数据
+                receipt = result.get("receipt", {})
+                extracted_params = result.get("extractedParameters", {})
+
+                # 构建最终响应
+                final_response = {
+                    "status": "success",
+                    "task_id": task_id,
+                    "receipt": receipt,
+                    "extractedParameters": extracted_params,
+                    "processed_at": datetime.now().isoformat(),
+                    "execution_time": result.get("execution_time", 0),
+                    "timestamp": result.get("timestamp")
+                }
+
+                # 打印详细的成功日志
+                print(f"🎉 Attestor任务 {task_id} 执行成功!")
+                print(f"   执行时间: {result.get('execution_time', 0):.2f}秒")
+                print(f"   规则: {rule.get('name', 'Unknown')}")
+
+                if extracted_params:
+                    print(f"   🎯 提取的参数: {extracted_params}")
+                    # 如果是银行余额，特别显示
+                    if any(key in str(extracted_params).lower() for key in ['hkd', 'usd', 'balance']):
+                        print(f"   💰 银行余额信息已成功提取!")
+                else:
+                    print(f"   ⚠️  未提取到参数，检查响应匹配规则")
+
+                if connection_closed:
+                    print(f"   ⚠️  前端连接已断开，无法返回响应")
+                else:
+                    # 只有连接还在时才设置响应
+                    flow.response = http.Response.make(
+                        200,
+                        json.dumps(final_response, ensure_ascii=False).encode(),
+                        {"Content-Type": "application/json; charset=utf-8"}
+                    )
+
+                self.metrics["attestor_success"] += 1
+
+            else:
+                # 失败情况
+                error_response = {
+                    "status": "error",
+                    "task_id": task_id,
+                    "error": result.get("error", "Unknown error"),
+                    "stderr": result.get("stderr", ""),
+                    "processed_at": datetime.now().isoformat(),
+                    "execution_time": result.get("execution_time", 0)
+                }
+
+                # 打印详细的失败日志
+                print(f"❌ Attestor任务 {task_id} 执行失败!")
+                print(f"   执行时间: {result.get('execution_time', 0):.2f}秒")
+                print(f"   规则: {rule.get('name', 'Unknown')}")
+                print(f"   错误: {result.get('error', 'Unknown error')}")
+                print(f"   stderr: {result.get('stderr', '')}")
+
+                if connection_closed:
+                    print(f"   ⚠️  前端连接已断开，无法返回错误响应")
+                else:
+                    # 只有连接还在时才设置响应
+                    flow.response = http.Response.make(
+                        500,
+                        json.dumps(error_response).encode(),
+                        {"Content-Type": "application/json"}
+                    )
+
+                self.metrics["attestor_failures"] += 1
+
+            if self.logger:
+                self.logger.info(f"Attestor响应处理完成: {task_id}")
+
+        except Exception as e:
+            # 响应处理异常
+            error_response = {
+                "status": "error",
+                "task_id": task_id,
+                "error": f"Response processing failed: {str(e)}"
+            }
+
+            flow.response = http.Response.make(
+                500,
+                json.dumps(error_response).encode(),
+                {"Content-Type": "application/json"}
+            )
+
+            if self.logger:
+                self.logger.error(f"Attestor响应处理异常: {e}")
+
+        finally:
+            # 清理待处理响应（无论连接是否断开）
+            if task_id in self.pending_responses:
+                if connection_closed:
+                    print(f"🧹 清理已断开连接的任务: {task_id}")
+                del self.pending_responses[task_id]
+
+    def _parse_attestor_output(self, stdout: str) -> Dict[str, Any]:
+        """解析attestor输出"""
+        try:
+            # 查找 "🎯 完整的Claim对象JSON:" 标记后的JSON
+            lines = stdout.strip().split('\n')
+            json_start_index = -1
+
+            for i, line in enumerate(lines):
+                if "🎯 完整的Claim对象JSON:" in line:
+                    json_start_index = i + 1
+                    break
+
+            if json_start_index >= 0:
+                # 从标记后开始收集JSON行
+                json_lines = []
+                brace_count = 0
+                started = False
+
+                for i in range(json_start_index, len(lines)):
+                    line = lines[i].strip()
+                    if not line:
+                        continue
+
+                    if line.startswith('{'):
+                        started = True
+
+                    if started:
+                        json_lines.append(line)
+                        brace_count += line.count('{') - line.count('}')
+
+                        if brace_count == 0:
+                            # JSON对象结束
+                            break
+
+                if json_lines:
+                    json_str = '\n'.join(json_lines)
+                    receipt = json.loads(json_str)
+
+                    # 提取关键信息
+                    result = {
+                        "parsed": True,
+                        "receipt": receipt
+                    }
+
+                    # 提取 extractedParameters
+                    if receipt.get("claim") and receipt["claim"].get("context"):
+                        try:
+                            context = json.loads(receipt["claim"]["context"])
+                            if context.get("extractedParameters"):
+                                result["extractedParameters"] = context["extractedParameters"]
+                        except:
+                            pass
+
+                    return result
+
+            # 如果没有找到标记，尝试直接解析JSON行
+            for line in lines:
+                line = line.strip()
+                if line.startswith('{') and line.strip().endswith('}'):
+                    try:
+                        return {
+                            "parsed": True,
+                            "receipt": json.loads(line)
+                        }
+                    except:
+                        continue
+
+            # 如果没有找到JSON，返回原始输出
+            return {
+                "raw_output": stdout,
+                "parsed": False
+            }
+
+        except Exception as e:
+            return {
+                "raw_output": stdout,
+                "parse_error": str(e),
+                "parsed": False
+            }
+
+    def error(self, flow: http.HTTPFlow) -> None:
+        """处理连接错误"""
+        self._cleanup_flow(flow)
+
+    def _cleanup_flow(self, flow: http.HTTPFlow):
+        """标记flow连接已断开，但不清理任务"""
+        # 查找相关的pending response，标记为断开连接
+        for task_id, pending_flow in self.pending_responses.items():
+            if pending_flow == flow:
+                print(f"🔌 前端连接断开，任务 {task_id} 将继续执行并打印结果")
+                # 不删除pending_responses，而是标记为断开连接
+                # 使用特殊标记来表示连接已断开
+                self.pending_responses[task_id] = "CONNECTION_CLOSED"
+
+    def done(self):
+        """Addon结束时调用"""
+        if self.logger:
+            self.logger.info("AttestorForwardingAddon 结束运行")
+            self.logger.info(f"处理统计: {dict(self.metrics)}")
+
+        print(f"📊 Attestor转发统计: {dict(self.metrics)}")
+
+        # 清理所有pending responses
+        if self.pending_responses:
+            print(f"🧹 清理 {len(self.pending_responses)} 个未完成的响应")
+            self.pending_responses.clear()
+
+    def _process_session_based_attestor(self, flow: http.HTTPFlow, session_match: Dict[str, Any]) -> None:
+        """
+        处理基于session匹配的attestor调用
+
+        Args:
+            flow: HTTP请求流
+            session_match: session匹配结果
+        """
+        session = session_match['session']
+        provider_id = session_match['provider_id']
+        task_id = session_match['task_id']
+        match_result = session_match['match_result']
+        attestor_params = session_match.get('attestor_params', {})
+        attestor_response = session_match['attestor_response']
+        should_call_attestor = session_match['should_call_attestor']
+
+        print(f"🎯 处理session-based attestor调用:")
+        print(f"   Session ID: {session['id']}")
+        print(f"   Provider ID: {provider_id}")
+        print(f"   Task ID: {task_id}")
+        print(f"   匹配URL: {match_result['matched_url']}")
+        print(f"   需要调用attestor: {should_call_attestor}")
+
+        if attestor_response:
+            # 如果已有attestor响应，直接返回
+            print(f"✅ 使用已有的attestor响应")
+
+            # 更新session状态为Finished
+            from task_session_db import SessionStatus
+
+            # 🎯 从已有的attestor响应中提取taskId
+            attestor_task_id = None
+            if isinstance(attestor_response, dict):
+                attestor_task_id = attestor_response.get('task_id') or attestor_response.get('taskId')
+
+            # 构建更新数据
+            update_data = {
+                'matched_url': match_result['matched_url'],
+                'similarity_score': match_result['similarity_score'],
+                'processed_by': 'session_based_matcher'
+            }
+
+            # 如果有attestor taskId，更新session的taskId
+            if attestor_task_id:
+                update_data['taskId'] = attestor_task_id
+                print(f"🔄 更新session taskId (已有响应): {session.get('taskId')} -> {attestor_task_id}")
+
+            self.session_matcher.task_session_db.update_session_status(
+                session['id'],
+                SessionStatus.FINISHED,
+                update_data
+            )
+
+            # 构造响应
+            flow.response = http.Response.make(
+                200,
+                json.dumps({
+                    "status": "completed",
+                    "session_id": session['id'],
+                    "task_id": task_id,
+                    "provider_id": provider_id,
+                    "attestor_response": attestor_response,
+                    "match_info": match_result
+                }),
+                {"Content-Type": "application/json"}
+            )
+
+        elif should_call_attestor:
+            # 需要调用attestor
+            print(f"🚀 开始调用attestor...")
+
+            # 获取provider配置
+            provider = self.session_matcher.provider_query.get_provider_by_id(provider_id)
+            if not provider:
+                print(f"❌ 无法获取provider配置: {provider_id}")
+                flow.response = http.Response.make(
+                    500,
+                    json.dumps({"error": f"Provider not found: {provider_id}"}),
+                    {"Content-Type": "application/json"}
+                )
+                return
+
+            # 使用provider配置调用attestor
+            self._call_attestor_with_provider_config(flow, provider, session, match_result, attestor_params)
+
+        else:
+            # 异常情况
+            print(f"⚠️  Session匹配成功但无法确定处理方式")
+            flow.response = http.Response.make(
+                500,
+                json.dumps({"error": "Unable to determine processing method"}),
+                {"Content-Type": "application/json"}
+            )
+
+    def _call_attestor_with_provider_config(self, flow: http.HTTPFlow, provider: Dict[str, Any],
+                                          session: Dict[str, Any], match_result: Dict[str, Any],
+                                          attestor_params: Dict[str, Any]) -> None:
+        """
+        使用provider配置调用attestor
+
+        Args:
+            flow: HTTP请求流
+            provider: Provider配置
+            session: Session记录
+            match_result: URL匹配结果
+            attestor_params: 已构建的attestor参数
+        """
+        try:
+            # 使用已构建的attestor参数（包含provider的responseMatches和responseRedactions）
+            if not attestor_params:
+                print(f"❌ 没有提供attestor参数")
+                flow.response = http.Response.make(
+                    500,
+                    json.dumps({"error": "No attestor parameters provided"}),
+                    {"Content-Type": "application/json"}
+                )
+                return
+
+            print(f"✅ 使用已构建的attestor参数")
+            params = attestor_params.get('params', {})
+            secret_params = attestor_params.get('secretParams', {})
+            headers = secret_params.get('headers', {})
+            print(f"   URL: {params.get('url', '')[:100]}...")
+            print(f"   方法: {params.get('method', '')}")
+            print(f"   Headers数量: {len(headers)}")
+            print(f"   ResponseMatches数量: {len(params.get('responseMatches', []))}")
+            print(f"   ResponseRedactions数量: {len(params.get('responseRedactions', []))}")
+            print(f"   SecretParams: {list(secret_params.keys())}")
+
+            # 创建响应回调
+            def response_callback(result: Dict[str, Any]):
+                self._handle_session_based_attestor_response(flow, result, session, match_result)
+
+            # 提交任务
+            if not self.executor:
+                print(f"❌ Attestor executor未初始化")
+                flow.response = http.Response.make(
+                    500,
+                    json.dumps({"error": "Attestor executor not initialized"}),
+                    {"Content-Type": "application/json"}
+                )
+                return
+
+            task_id = self.executor.submit_task(attestor_params, response_callback)
+
+            # 返回处理中的响应
+            flow.response = http.Response.make(
+                202,  # Accepted
+                json.dumps({
+                    "status": "processing",
+                    "session_id": session['id'],
+                    "task_id": task_id,
+                    "provider_id": session['providerId'],
+                    "match_info": match_result,
+                    "message": "Attestor processing started"
+                }),
+                {"Content-Type": "application/json"}
+            )
+
+            print(f"🚀 Attestor任务已提交: {task_id}")
+
+        except Exception as e:
+            print(f"❌ 调用attestor失败: {e}")
+            flow.response = http.Response.make(
+                500,
+                json.dumps({"error": f"Attestor call failed: {str(e)}"}),
+                {"Content-Type": "application/json"}
+            )
+
+    def _handle_session_based_attestor_response(self, flow: http.HTTPFlow, result: Dict[str, Any],
+                                              session: Dict[str, Any], match_result: Dict[str, Any]) -> None:
+        """
+        处理session-based attestor响应
+
+        Args:
+            flow: HTTP请求流
+            result: Attestor执行结果
+            session: Session记录
+            match_result: URL匹配结果
+        """
+        try:
+            print(f"📨 收到session-based attestor响应: {session['id']}")
+
+            # 更新session状态
+            from task_session_db import SessionStatus
+            status = SessionStatus.FINISHED if result.get('success') else SessionStatus.FAILED
+
+            # 🎯 从attestor结果中提取taskId
+            attestor_task_id = result.get('task_id') or result.get('taskId')
+
+            # 🔍 详细分析attestor响应，特别是extractedParameters
+            print(f"🔍 详细分析attestor响应:")
+            print(f"   Success: {result.get('success', False)}")
+
+            if 'claim' in result:
+                claim = result['claim']
+                print(f"   Claim存在: True")
+
+                if 'context' in claim:
+                    context_str = claim['context']
+                    print(f"   Context: {context_str}")
+
+                    try:
+                        import json
+                        context_obj = json.loads(context_str)
+                        print(f"   Context解析成功:")
+                        print(f"     providerHash: {context_obj.get('providerHash', '缺失')}")
+
+                        if 'extractedParameters' in context_obj:
+                            extracted = context_obj['extractedParameters']
+                            print(f"     ✅ extractedParameters: {extracted}")
+                            print(f"     提取的字段数量: {len(extracted)}")
+                        else:
+                            print(f"     ❌ 缺少extractedParameters - 这是问题所在!")
+                            print(f"     可能原因: responseRedactions的正则表达式没有匹配到响应内容")
+                    except Exception as e:
+                        print(f"   ❌ Context解析失败: {e}")
+                else:
+                    print(f"   ❌ 缺少context字段")
+            else:
+                print(f"   ❌ 缺少claim字段")
+
+            # 构建更新数据
+            update_data = {
+                'matched_url': match_result['matched_url'],
+                'similarity_score': match_result['similarity_score'],
+                'processed_by': 'session_based_matcher',
+                'completed_at': time.time()
+            }
+
+            # 🎯 只在attestor失败时写attestor_result字段（用于调试）
+            if not result.get('success', False):
+                update_data['attestor_result'] = result
+                print(f"💾 Attestor失败，已保存结果到session用于调试")
+            else:
+                # 即使成功，如果没有extractedParameters也记录一下
+                if 'claim' in result and 'context' in result['claim']:
+                    try:
+                        import json
+                        context_obj = json.loads(result['claim']['context'])
+                        if 'extractedParameters' not in context_obj:
+                            print(f"⚠️ Attestor成功但没有提取到参数，可能需要检查responseRedactions")
+                    except:
+                        pass
+
+            # 如果有attestor taskId，更新session的taskId
+            if attestor_task_id:
+                update_data['taskId'] = attestor_task_id
+                print(f"🔄 更新session taskId: {session.get('taskId')} -> {attestor_task_id}")
+
+            self.session_matcher.task_session_db.update_session_status(
+                session['id'],
+                status,
+                update_data
+            )
+
+            print(f"✅ Session状态已更新为: {status.value}")
+
+        except Exception as e:
+            print(f"❌ 处理session-based attestor响应失败: {e}")
+
+
+# 全局addon实例
+addons = [AttestorForwardingAddon()]

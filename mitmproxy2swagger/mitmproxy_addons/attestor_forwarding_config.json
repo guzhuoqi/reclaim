@@ -1,0 +1,132 @@
+{
+  "version": "1.0.0",
+  "description": "Attestor集成转发配置",
+  "last_updated": "2025-08-05 18:00:00",
+  "global_settings": {
+    "enable_logging": true,
+    "log_level": "INFO",
+    "log_file": "logs/attestor_forwarding.log",
+    "zkme_express_host": "localhost",
+    "zkme_express_port": 3000,
+    "max_workers": 3,
+    "request_timeout": 180,
+    "private_key": "0x0123788edad59d7c013cdc85e4372f350f828e2cec62d9a2de4560e69aec7f89"
+  },
+  "attestor_rules": {
+    "enabled": true,
+    "description": "定义哪些请求需要通过attestor处理",
+    "rules": [
+      {
+        "name": "招商永隆银行余额查询",
+        "description": "处理招商永隆银行的余额查询API - 严格匹配",
+        "domains": [
+          "www.cmbwinglungbank.com"
+        ],
+        "paths": [
+          "/ibanking/McpCSReqServlet"
+        ],
+        "methods": ["POST", "GET"],
+        "required_params": [
+          "dse_operationName=NbBkgActdetCoaProc2022",
+          "AcctTypeId=CON",
+          "RequestType=D",
+          "selectedProductKey=CON"
+        ],
+        "response_patterns": {
+          "hkd_balance": "HKD[^\\d]*(\\d[\\d,]*\\.\\d{2})",
+          "usd_balance": "USD[^\\d]*(\\d[\\d,]*\\.\\d{2})"
+        },
+        "geo_location": "HK",
+        "enabled": true
+      },
+      {
+        "name": "Binance价格API",
+        "description": "处理Binance的价格查询API",
+        "domains": [
+          "api.binance.com",
+          "*.binance.com"
+        ],
+        "paths": [
+          "/api/v3/ticker/price.*",
+          "/api/v3/ticker/.*"
+        ],
+        "methods": ["GET"],
+        "response_patterns": {
+          "price": "\"price\":\"(\\d+\\.\\d+)\"",
+          "symbol": "\"symbol\":\"(\\w+)\""
+        },
+        "geo_location": "US",
+        "enabled": false
+      },
+      {
+        "name": "通用银行API",
+        "description": "处理其他银行的API请求",
+        "domains": [
+          "*.bank.com",
+          "*.banking.com",
+          "*bank*.com"
+        ],
+        "paths": [
+          ".*/balance.*",
+          ".*/account.*",
+          ".*/transaction.*"
+        ],
+        "methods": ["GET", "POST"],
+        "response_patterns": {
+          "balance": "余额[^\\d]*(\\d[\\d,]*\\.\\d{2})",
+          "account": "账户[^\\w]*(\\w{10,20})",
+          "amount": "金额[^\\d]*(\\d[\\d,]*\\.\\d{2})"
+        },
+        "geo_location": "HK",
+        "enabled": false
+      }
+    ]
+  },
+  "response_settings": {
+    "include_original_response": false,
+    "include_attestor_proof": true,
+    "include_raw_output": false,
+    "response_format": "json",
+    "response_headers": {
+      "X-Processed-By": "Attestor-Forwarding-Addon",
+      "X-Proof-Generated": "true"
+    }
+  },
+  "error_handling": {
+    "max_retries": 2,
+    "retry_delay": 5,
+    "fallback_to_original": false,
+    "timeout_response": {
+      "status": "timeout",
+      "message": "Attestor processing timeout"
+    },
+    "error_response": {
+      "status": "error",
+      "message": "Attestor processing failed"
+    }
+  },
+  "performance": {
+    "enable_metrics": true,
+    "metrics_file": "logs/attestor_metrics.json",
+    "log_slow_requests": true,
+    "slow_request_threshold": 30
+  },
+  "security": {
+    "allowed_domains": [
+      "*.cmbwinglungbank.com",
+      "api.binance.com",
+      "localhost",
+      "127.0.0.1"
+    ],
+    "blocked_domains": [],
+    "require_https": true,
+    "max_request_size": 1048576
+  },
+  "development": {
+    "debug_mode": true,
+    "save_requests": true,
+    "save_responses": true,
+    "requests_dir": "logs/requests",
+    "responses_dir": "logs/responses"
+  }
+}

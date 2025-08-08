@@ -21,6 +21,109 @@ from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 from urllib.parse import urlparse
 from dataclasses import dataclass
+from html.parser import HTMLParser
+import html
+
+
+class FinancialHTMLParser(HTMLParser):
+    """专门用于解析HTML中金融数据的解析器"""
+
+    def __init__(self):
+        super().__init__()
+        self.financial_data = []
+        self.current_tag = None
+        self.current_attrs = {}
+        self.text_content = []
+
+        # 金融数据相关的标签和属性
+        self.financial_indicators = {
+            'currency_codes': ['HKD', 'USD', 'CNY', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'SGD'],
+            'amount_patterns': [
+                r'\$[\d,]+\.?\d*',  # $1,234.56
+                r'[\d,]+\.?\d*\s*(HKD|USD|CNY|EUR|GBP|JPY)',  # 1,234.56 HKD
+                r'(HKD|USD|CNY|EUR|GBP|JPY)\s*[\d,]+\.?\d*',  # HKD 1,234.56
+                r'[\d,]+\.?\d{2}',  # 1,234.56
+            ],
+            'account_patterns': [
+                r'\d{4,20}',  # 账户号码
+                r'[A-Z]{2,4}\d{6,16}',  # 银行账户格式
+            ],
+            'financial_keywords': [
+                'balance', 'amount', 'value', 'total', 'available', 'current',
+                'account', 'portfolio', 'investment', 'asset', 'equity',
+                '余额', '金额', '总额', '可用', '当前', '账户', '投资组合', '资产'
+            ]
+        }
+
+    def handle_starttag(self, tag, attrs):
+        self.current_tag = tag
+        self.current_attrs = dict(attrs)
+
+        # 检查属性中的金融数据
+        for attr_name, attr_value in attrs:
+            if attr_value:
+                self._analyze_text_for_financial_data(attr_value, f"attr:{attr_name}")
+
+    def handle_data(self, data):
+        if data.strip():
+            self.text_content.append(data.strip())
+            self._analyze_text_for_financial_data(data.strip(), f"tag:{self.current_tag}")
+
+    def _analyze_text_for_financial_data(self, text, source):
+        """分析文本中的金融数据"""
+        text_lower = text.lower()
+
+        # 检查货币代码
+        for currency in self.financial_indicators['currency_codes']:
+            if currency.lower() in text_lower or currency in text:
+                self.financial_data.append({
+                    'type': 'currency',
+                    'value': currency,
+                    'source': source,
+                    'context': text[:100]
+                })
+
+        # 检查金额模式
+        for pattern in self.financial_indicators['amount_patterns']:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                self.financial_data.append({
+                    'type': 'amount',
+                    'value': match,
+                    'source': source,
+                    'context': text[:100]
+                })
+
+        # 检查账户模式
+        for pattern in self.financial_indicators['account_patterns']:
+            matches = re.findall(pattern, text)
+            for match in matches:
+                # 过滤掉明显不是账户号的数字（如年份、电话等）
+                if len(match) >= 6 and not match.startswith(('19', '20')):
+                    self.financial_data.append({
+                        'type': 'account',
+                        'value': match,
+                        'source': source,
+                        'context': text[:100]
+                    })
+
+        # 检查金融关键字
+        for keyword in self.financial_indicators['financial_keywords']:
+            if keyword in text_lower:
+                self.financial_data.append({
+                    'type': 'keyword',
+                    'value': keyword,
+                    'source': source,
+                    'context': text[:100]
+                })
+
+    def get_financial_data(self):
+        """获取解析出的金融数据"""
+        return self.financial_data
+
+    def get_text_content(self):
+        """获取所有文本内容"""
+        return ' '.join(self.text_content)
 
 
 @dataclass
@@ -325,7 +428,7 @@ class FinancialAPIAnalyzer:
         return len(detected_auth) > 0, detected_auth
 
     def analyze_response_content(self, response_content: str) -> Tuple[bool, List[str]]:
-        """分析响应内容
+        """分析响应内容（支持JSON和HTML）
 
         Args:
             response_content: 响应内容
@@ -339,13 +442,13 @@ class FinancialAPIAnalyzer:
         content_indicators = self.features_config.get("response_content_indicators", {})
         matched_fields = []
 
-        # 检查高价值字段
+        # 1. 检查高价值字段（原有逻辑）
         high_value_fields = content_indicators.get("high_value_fields", [])
         for field in high_value_fields:
             if field.lower() in response_content.lower():
                 matched_fields.append(f"field:{field}")
 
-        # 检查金融数据模式
+        # 2. 检查金融数据模式（原有逻辑）
         financial_patterns = content_indicators.get("financial_data_patterns", [])
         for pattern in financial_patterns:
             try:
@@ -354,7 +457,268 @@ class FinancialAPIAnalyzer:
             except re.error:
                 continue
 
+        # 3. 🎯 新增：HTML内容解析
+        html_financial_data = self.analyze_html_content(response_content)
+        matched_fields.extend(html_financial_data)
+
+        # 4. 🎯 新增：JSON内容深度解析
+        json_financial_data = self.analyze_json_content(response_content)
+        matched_fields.extend(json_financial_data)
+
         return len(matched_fields) > 0, matched_fields
+
+    def analyze_html_content(self, content: str) -> List[str]:
+        """分析HTML内容中的金融数据 - 🎯 精确验证实际内容
+
+        Args:
+            content: HTML内容
+
+        Returns:
+            List[str]: 匹配的金融数据模式列表
+        """
+        matched_patterns = []
+
+        # 检查是否为HTML内容
+        if not (content.strip().startswith('<') or '<html' in content.lower() or '<body' in content.lower()):
+            return matched_patterns
+
+        try:
+            # 🎯 精确验证：只有真实存在且有意义的数据才生成模式
+            verified_data = self._verify_html_financial_data(content)
+
+            # 根据验证结果生成精确的模式
+            if verified_data['currencies']:
+                for currency in verified_data['currencies']:
+                    matched_patterns.append(f"html_currency:{currency}")
+                matched_patterns.append(f"html_content:currency")
+
+            if verified_data['amounts']:
+                matched_patterns.append(f"html_content:amount")
+
+            if verified_data['accounts']:
+                matched_patterns.append(f"html_content:account")
+
+            if verified_data['balance_indicators']:
+                matched_patterns.append(f"html_content:balance")
+
+            if verified_data['asset_indicators']:
+                matched_patterns.append(f"html_content:asset")
+
+            if verified_data['name_indicators']:
+                matched_patterns.append(f"html_content:customer_name")
+
+            print(f"🔍 HTML精确验证结果: 货币{len(verified_data['currencies'])}个, 金额{len(verified_data['amounts'])}个, 账户{len(verified_data['accounts'])}个")
+
+        except Exception as e:
+            print(f"⚠️ HTML解析失败: {e}")
+
+        return matched_patterns
+
+    def _verify_html_financial_data(self, content: str) -> dict:
+        """精确验证HTML内容中的金融数据
+
+        Args:
+            content: HTML内容
+
+        Returns:
+            dict: 验证后的金融数据
+        """
+        import re
+
+        verified_data = {
+            'currencies': set(),
+            'amounts': set(),
+            'accounts': set(),
+            'balance_indicators': False,
+            'asset_indicators': False,
+            'name_indicators': False
+        }
+
+        # 🎯 精确验证货币代码 - 必须在表格或明确的金融上下文中
+        currency_codes = ['HKD', 'USD', 'CNY', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'SGD']
+        for currency in currency_codes:
+            # 检查货币代码是否在表格单元格中或与金额相关的上下文中
+            currency_patterns = [
+                rf'<td[^>]*>{currency}</td>',  # 表格单元格中
+                rf'<span[^>]*>{currency}</span>',  # span标签中
+                rf'{currency}\s*[0-9,]+\.?\d*',  # 货币代码后跟数字
+                rf'[0-9,]+\.?\d*\s*{currency}',  # 数字后跟货币代码
+            ]
+
+            for pattern in currency_patterns:
+                if re.search(pattern, content, re.IGNORECASE):
+                    verified_data['currencies'].add(currency)
+                    break
+
+        # 🎯 精确验证金额格式 - 必须是真实的金额格式
+        amount_patterns = [
+            r'\$[0-9,]+\.[0-9]{2}',  # $1,234.56
+            r'[0-9,]+\.[0-9]{2}\s*(HKD|USD|CNY|EUR|GBP|JPY)',  # 1,234.56 HKD
+            r'(HKD|USD|CNY|EUR|GBP|JPY)\s*[0-9,]+\.[0-9]{2}',  # HKD 1,234.56
+        ]
+
+        for pattern in amount_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            if matches:
+                verified_data['amounts'].update(matches[:5])  # 最多记录5个
+
+        # 🎯 精确验证账户号码 - 排除明显的日期、电话等
+        account_patterns = [
+            r'\b\d{8,20}\b',  # 8-20位数字
+            r'\b[A-Z]{2,4}\d{8,16}\b',  # 字母+数字格式
+        ]
+
+        for pattern in account_patterns:
+            matches = re.findall(pattern, content)
+            for match in matches:
+                # 排除明显的日期格式
+                if not (match.startswith('20') and len(match) == 8):  # 排除20140715这样的日期
+                    if not (match.startswith('19') and len(match) == 8):  # 排除19xx年份
+                        verified_data['accounts'].add(match)
+
+        # 🎯 精确验证余额指示器 - 必须在金融上下文中
+        balance_keywords = ['balance', 'available', 'current', '余额', '可用', '当前']
+        balance_context_patterns = [
+            r'(balance|available|current|余额|可用|当前)[^<]*[0-9,]+\.?\d*',
+            r'<td[^>]*>(balance|available|current|余额|可用|当前)</td>',
+        ]
+
+        for pattern in balance_context_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                verified_data['balance_indicators'] = True
+                break
+
+        # 🎯 精确验证资产指示器
+        asset_keywords = ['asset', 'portfolio', 'investment', 'equity', '资产', '投资组合', '净值']
+        for keyword in asset_keywords:
+            if keyword in content.lower() and re.search(rf'{keyword}[^<]*[0-9,]+\.?\d*', content, re.IGNORECASE):
+                verified_data['asset_indicators'] = True
+                break
+
+        # 🎯 精确验证姓名指示器
+        name_keywords = ['customer', 'holder', 'name', '客户', '持有人', '姓名']
+        for keyword in name_keywords:
+            if keyword in content.lower():
+                verified_data['name_indicators'] = True
+                break
+
+        return verified_data
+
+    def analyze_json_content(self, content: str) -> List[str]:
+        """深度分析JSON内容中的金融数据
+
+        Args:
+            content: JSON内容
+
+        Returns:
+            List[str]: 匹配的金融数据模式列表
+        """
+        matched_patterns = []
+
+        # 检查是否为JSON内容
+        content_stripped = content.strip()
+        if not (content_stripped.startswith('{') or content_stripped.startswith('[')):
+            return matched_patterns
+
+        try:
+            # 解析JSON
+            if content_stripped.startswith('{'):
+                data = json.loads(content_stripped)
+            elif content_stripped.startswith('['):
+                data = json.loads(content_stripped)
+                # 如果是数组，取第一个元素进行分析
+                if data and isinstance(data, list) and len(data) > 0:
+                    data = data[0]
+                else:
+                    return matched_patterns
+            else:
+                return matched_patterns
+
+            # 递归分析JSON结构
+            self._analyze_json_object(data, matched_patterns, "")
+
+            print(f"🔍 JSON解析结果: 发现{len(matched_patterns)}个金融数据模式")
+
+        except (json.JSONDecodeError, Exception) as e:
+            # 不是有效的JSON，忽略
+            pass
+
+        return matched_patterns
+
+    def _analyze_json_object(self, obj, matched_patterns: List[str], path: str):
+        """递归分析JSON对象"""
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                current_path = f"{path}.{key}" if path else key
+
+                # 分析键名
+                self._analyze_json_key(key, matched_patterns)
+
+                # 分析值
+                if isinstance(value, (str, int, float)):
+                    self._analyze_json_value(key, value, matched_patterns)
+                elif isinstance(value, (dict, list)):
+                    self._analyze_json_object(value, matched_patterns, current_path)
+
+        elif isinstance(obj, list):
+            for i, item in enumerate(obj):
+                if isinstance(item, (dict, list)):
+                    self._analyze_json_object(item, matched_patterns, f"{path}[{i}]")
+
+    def _analyze_json_key(self, key: str, matched_patterns: List[str]):
+        """分析JSON键名"""
+        key_lower = key.lower()
+
+        # 货币相关 - 🎯 JSON专用模式
+        if any(currency_kw in key_lower for currency_kw in ['currency', 'curr', 'ccy']):
+            if "json_content:currency" not in matched_patterns:
+                matched_patterns.append("json_content:currency")
+
+        # 金额相关
+        if any(amount_kw in key_lower for amount_kw in ['amount', 'value', 'price', 'cost']):
+            if "json_content:amount" not in matched_patterns:
+                matched_patterns.append("json_content:amount")
+
+        # 余额相关
+        if any(balance_kw in key_lower for balance_kw in ['balance', 'available', 'current']):
+            if "json_content:balance" not in matched_patterns:
+                matched_patterns.append("json_content:balance")
+
+        # 账户相关
+        if any(account_kw in key_lower for account_kw in ['account', 'acc', 'acct']):
+            if "json_content:account" not in matched_patterns:
+                matched_patterns.append("json_content:account")
+
+        # 用户信息相关
+        if any(name_kw in key_lower for name_kw in ['name', 'customer', 'holder', 'user']):
+            if "json_content:customer_name" not in matched_patterns:
+                matched_patterns.append("json_content:customer_name")
+
+        # 资产相关
+        if any(asset_kw in key_lower for asset_kw in ['asset', 'portfolio', 'investment', 'equity']):
+            if "json_content:asset" not in matched_patterns:
+                matched_patterns.append("json_content:asset")
+
+    def _analyze_json_value(self, key: str, value, matched_patterns: List[str]):
+        """分析JSON值"""
+        if isinstance(value, str):
+            value_upper = value.upper()
+
+            # 检查货币代码 - 🎯 JSON专用模式
+            currency_codes = ['HKD', 'USD', 'CNY', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'SGD']
+            if value_upper in currency_codes:
+                if "json_content:currency" not in matched_patterns:
+                    matched_patterns.append("json_content:currency")
+                matched_patterns.append(f"json_currency:{value_upper}")
+
+        elif isinstance(value, (int, float)):
+            # 检查是否为金额（通过键名判断）
+            key_lower = key.lower()
+            if any(money_kw in key_lower for money_kw in ['amount', 'balance', 'value', 'price', 'cost']):
+                if "json_content:amount" not in matched_patterns:
+                    matched_patterns.append("json_content:amount")
+                if "json_content:balance" not in matched_patterns and 'balance' in key_lower:
+                    matched_patterns.append("json_content:balance")
 
     def calculate_priority_level(self, score: int) -> str:
         """计算优先级等级"""
