@@ -113,7 +113,12 @@ class AttestorExecutor:
 
             # 准备参数
             params_json = json.dumps(attestor_params["params"])
-            secret_params_json = json.dumps(attestor_params["secretParams"])
+            secret_params_json = json.dumps(attestor_params.get("secretParams", {}))
+
+            # 🔍 调试：打印实际传递的参数
+            print(f"🔍 调试 - 传递给attestor的参数:")
+            print(f"   params: {params_json[:200]}...")
+            print(f"   secretParams: {secret_params_json}")
 
             # 使用 shell 重定向将调试输出重定向到 /dev/null
             import shlex
@@ -582,10 +587,9 @@ class AttestorForwardingAddon:
             print(f"   转换后的参数:")
             print(f"   - URL: {attestor_params['params']['url']}")
             print(f"   - Method: {attestor_params['params']['method']}")
-            print(f"   - Basic Headers: {attestor_params['params']['headers']}")
-            print(f"   - Secret Headers: {list(attestor_params['secretParams'].get('headers', {}).keys())}")
-            print(f"   - Cookie: {'Yes' if attestor_params['secretParams'].get('cookieStr') else 'No'}")
-            print(f"   - Response Patterns: {attestor_params['params'].get('responseMatches', [])}")
+            print(f"   - Headers: {len(attestor_params['params']['headers'])} 个")
+            print(f"   - SecretParams: 空对象")
+            print(f"   - Response Patterns: {len(attestor_params['params'].get('responseMatches', []))} 个")
 
             # 创建响应回调
             def response_callback(result: Dict[str, Any]):
@@ -996,13 +1000,13 @@ class AttestorForwardingAddon:
             print(f"✅ 使用已构建的attestor参数")
             params = attestor_params.get('params', {})
             secret_params = attestor_params.get('secretParams', {})
-            headers = secret_params.get('headers', {})
+            params_headers = params.get('headers', {})
             print(f"   URL: {params.get('url', '')[:100]}...")
             print(f"   方法: {params.get('method', '')}")
-            print(f"   Headers数量: {len(headers)}")
+            print(f"   普通Headers数量: {len(params_headers)}")
+            print(f"   SecretParams: {list(secret_params.keys())}")
             print(f"   ResponseMatches数量: {len(params.get('responseMatches', []))}")
             print(f"   ResponseRedactions数量: {len(params.get('responseRedactions', []))}")
-            print(f"   SecretParams: {list(secret_params.keys())}")
 
             # 创建响应回调
             def response_callback(result: Dict[str, Any]):
@@ -1094,8 +1098,6 @@ class AttestorForwardingAddon:
                         print(f"   ❌ Context解析失败: {e}")
                 else:
                     print(f"   ❌ 缺少context字段")
-            else:
-                print(f"   ❌ 缺少claim字段")
 
             # 构建更新数据
             update_data = {

@@ -222,14 +222,27 @@ class ReclaimProviderBuilder:
                     # 字段匹配 - 生成字段验证和提取规则
                     field_name = pattern.replace("field:", "")
 
-                    response_matches.append({
-                        "value": f'"{field_name}"',
-                        "type": "contains",
-                        "invert": False,
-                        "description": f"验证{field_name}字段存在",
-                        "order": order_counter,
-                        "isOptional": False
-                    })
+                    # 先做命中预校验：仅当响应正文包含该字段名才加入 contains
+                    if f'"{field_name}"' in response_content:
+                        response_matches.append({
+                            "value": f'"{field_name}"',
+                            "type": "contains",
+                            "invert": False,
+                            "description": f"验证{field_name}字段存在",
+                            "order": order_counter,
+                            "isOptional": False
+                        })
+                    else:
+                        # 对未命中的字段，降级为可选，或直接跳过（HTML 场景多为未命中）
+                        if not self._is_html_response(matched_patterns):
+                            response_matches.append({
+                                "value": f'"{field_name}"',
+                                "type": "contains",
+                                "invert": False,
+                                "description": f"验证{field_name}字段存在（可选）",
+                                "order": order_counter,
+                                "isOptional": True
+                            })
 
                     # 🎯 根据响应类型决定是否使用jsonPath
                     json_path = "" if self._is_html_response(matched_patterns) else f"$.{field_name}"
@@ -247,11 +260,79 @@ class ReclaimProviderBuilder:
                       ("html_currency:" in pattern and any("html_currency:" in p for p in matched_patterns))):
                     # 🎯 HTML余额相关API - 应用优先级匹配规则：从严格到宽松
                     print(f"🎯 DEBUG: 触发HTML余额优先级匹配规则! pattern={pattern}, matched_patterns={matched_patterns}")
+
+                    # 站点定制严格规则（参考提供的模板文件）
+                    try:
+                        host = urlparse(url).netloc.lower()
+                    except Exception:
+                        host = ""
+
+                    if 'its.bochk.com' in host:
+                        # 仅限账户总览页参与余额严格校验，登录/登录提交页不参与
+                        try:
+                            _path_lower = urlparse(url).path.lower()
+                        except Exception:
+                            _path_lower = ''
+                        if 'acc.overview.do' not in _path_lower:
+                            print(f"⏭️ 跳过BOC严格余额规则（非概览页）：{url}")
+                            # 继续后续通用流程处理
+                            pass
+                        else:
+                            # 中国银行香港：基于 table cell class 的严格规则（只加入 responseMatches）
+                            strict_class_rules = [
+                                (
+                                    r'data_table_swap1_txt data_table_lastcell"[^>]*>(?P<hkd_balance>[\d,]+\.\d{2})</td>',
+                                    '严格规则：BOC HKD 余额（class锚点）'
+                                ),
+                                (
+                                    r'data_table_swap2_txt data_table_lastcell"[^>]*>(?P<usd_balance>[\d,]+\.\d{2})</td>',
+                                    '严格规则：BOC USD 余额（class锚点）'
+                                ),
+                                (
+                                    r'data_table_subtotal data_table_lastcell"[^>]*>(?P<total_balance>[\d,]+\.\d{2})</td>',
+                                    '严格规则：BOC 总余额（class锚点）'
+                                ),
+                            ]
+                            for regex, desc in strict_class_rules:
+                                response_matches.append({
+                                    "value": regex,
+                                    "type": "regex",
+                                    "invert": False,
+                                    "description": desc,
+                                    "order": order_counter,
+                                    "isOptional": False
+                                })
+                                order_counter += 1
+                            # 已按站点定制生成，跳过通用流程
+                            continue
+
+                    if 'cmbwinglungbank.com' in host:
+                        # 招商永隆：货币紧邻金额的严格规则
+                        strict_currency_rules = [
+                            (r'HKD[^\d]*(?P<hkd_balance>\d[\d,]*\.\d{2})', '严格规则：CMB WL HKD 纯净金额'),
+                            (r'USD[^\d]*(?P<usd_balance>\d[\d,]*\.\d{2})', '严格规则：CMB WL USD 纯净金额'),
+                            (r'CNY[^\d]*(?P<cny_balance>\d[\d,]*\.\d{2})', '严格规则：CMB WL CNY 纯净金额'),
+                        ]
+
+                        for regex, desc in strict_currency_rules:
+                            response_matches.append({
+                                "value": regex,
+                                "type": "regex",
+                                "invert": False,
+                                "description": desc,
+                                "order": order_counter,
+                                "isOptional": True
+                            })
+                            order_counter += 1
+
+                        # 站点定制已生成，跳过通用流程
+                        continue
+
                     balance_rules = self._generate_priority_balance_rules(matched_patterns, response_content)
                     print(f"🎯 DEBUG: 生成的优先级规则数量: {len(balance_rules)}")
 
                     if balance_rules:
-                        # 添加所有优先级规则到responseMatches和responseRedactions
+                        # 严格→宽松优先匹配：仅将命中的第一条作为校验规则加入 responseMatches，同时加入 redactions 便于提取
                         for rule in balance_rules:
                             response_matches.append({
                                 "value": rule["regex"],
@@ -259,9 +340,8 @@ class ReclaimProviderBuilder:
                                 "invert": False,
                                 "description": rule["description"],
                                 "order": order_counter,
-                                "isOptional": rule.get("isOptional", False)
+                                "isOptional": rule.get("isOptional", True)
                             })
-
                             response_redactions.append({
                                 "xPath": "",
                                 "jsonPath": "",
@@ -271,39 +351,31 @@ class ReclaimProviderBuilder:
                             })
                             order_counter += 1
                     else:
-                        # 降级使用原有的简单余额匹配规则
-                        print(f"⚠️ DEBUG: 优先级规则生成失败，使用降级规则")
-                        response_matches.append({
-                            "value": "balance|Balance|余额|可用|available|current",
-                            "type": "contains",
-                            "invert": False,
-                            "description": "验证HTML中包含余额相关文本",
-                            "order": order_counter,
-                            "isOptional": False
-                        })
-
-                        response_redactions.append({
-                            "xPath": "",
-                            "jsonPath": "",
-                            "regex": "(?P<balance_keyword>balance|Balance|余额|可用|available|current)",
-                            "hash": "",
-                            "order": order_counter
-                        })
-                        order_counter += 1
+                        # 不再添加通用contains兜底规则，避免无效校验
+                        print(f"⚠️ DEBUG: 优先级规则生成失败，跳过通用余额contains兜底")
 
 
 
                 elif "html_content:account" in pattern or ("content:account" in pattern and content_type == "html"):
                     # HTML账户相关API - 🎯 只生成实际能匹配的规则
+                    # 登录/认证页不展示账号信息，直接跳过
+                    try:
+                        url_lower = (url or "").lower()
+                    except Exception:
+                        url_lower = ""
+                    if any(k in url_lower for k in ["login", "logon", "auth"]):
+                        print(f"⏭️ 跳过登录/认证页的账户规则: {url}")
+                        continue
+
                     actual_accounts = self._extract_actual_accounts(response_content)
 
-                    if actual_accounts:
-                        # 🎯 验证账户号码正则表达式的有效性（修复单词边界问题）
-                        account_regex = "(?P<account_number>\\d{8,20}(?=[A-Z])|[A-Z]{2,4}\\d{8,16})"
+                    if actual_accounts and self._validate_account_context(response_content):
+                        # 🎯 验证账户号码正则表达式的有效性（避免使用不兼容的前瞻）
+                        account_regex = "(?P<account_number>[A-Z]{2,4}\\d{8,16}|\\d{8,20}[A-Z])"
                         if self._validate_regex_effectiveness(response_content, account_regex, "账户号码"):
                             # 为实际存在的账户号码生成匹配规则
                             response_matches.append({
-                                "value": "\\d{8,20}(?=[A-Z])|[A-Z]{2,4}\\d{8,16}",
+                                "value": "[A-Z]{2,4}\\d{8,16}|\\d{8,20}[A-Z]",
                                 "type": "regex",
                                 "invert": False,
                                 "description": f"验证HTML中的实际账户号码",
@@ -321,9 +393,9 @@ class ReclaimProviderBuilder:
                             order_counter += 1
                             print(f"✅ 生成账户匹配规则: {len(actual_accounts)}个实际账户")
                         else:
-                            print(f"⚠️ 跳过生成账户号码匹配规则 - 质量评估未通过")
+                            print(f"⚠️ 跳过生成账户号码匹配规则 - 质量/上下文评估未通过")
                     else:
-                        print(f"⚠️ 跳过账户模式 - 响应中未找到实际账户号码")
+                        print(f"⚠️ 跳过账户模式 - 未通过上下文或未发现实际账户号码")
 
                     # 🎯 二次判断：检查账户关键字的上下文是否符合用户信息格式
                     if self._validate_account_context(response_content):
@@ -649,19 +721,21 @@ class ReclaimProviderBuilder:
 
                 print(f"🔧 去重后: responseMatches {len(response_matches)}个, responseRedactions {len(response_redactions)}个")
 
-                return response_matches, response_redactions
-            else:
-                print(f"⚠️  未找到可转换的模式，使用通用规则")
-                # 生成通用的验证规则
-                response_matches.append({
-                    "value": "200",
-                    "type": "contains",
-                    "invert": False,
-                    "description": "验证HTTP响应成功",
-                    "order": 1,
-                    "isOptional": True
-                })
-                return response_matches, response_redactions
+            # 🎯 质量过滤：仅保留中等偏上质量的匹配规则
+            try:
+                quality_threshold = 6.5  # 中等偏上
+                filtered_matches = self._filter_response_matches_by_quality(
+                    response_matches,
+                    response_content,
+                    threshold=quality_threshold
+                )
+                print(f"🧪 质量过滤: 阈值={quality_threshold}，保留 {len(filtered_matches)}/{len(response_matches)} 个")
+                response_matches = filtered_matches
+            except Exception as _e:
+                print(f"⚠️ 质量过滤异常（跳过）：{_e}")
+            
+            # 若过滤后无有效规则，可选择不强塞通用 contains，避免误导
+            return response_matches, response_redactions
 
         # 🔄 回退：使用传统方法
         print(f"⚠️  回退到传统方法生成响应模式")
@@ -953,7 +1027,13 @@ class ReclaimProviderBuilder:
         # 🎯 提取响应模式 - 传入API数据以利用特征库匹配结果
         response_matches, response_redactions = self.extract_response_patterns(response_content, url, api_data)
 
-        # 如果没有找到有效的响应模式，降级处理
+        # 硬规则：responseMatches 为空则不纳入 provider
+        if not response_matches:
+            print(f"⚠️  responseMatches 为空，不纳入provider: {url}")
+            quality_check.missing_fields.append('response_matches')
+            return None, quality_check
+
+        # 如果没有找到任何响应模式（双空），降级处理（保留原有逻辑）
         if not response_matches and not response_redactions:
             print(f"⚠️  未找到有效的响应模式: {url}")
             quality_check.missing_fields.append('response_patterns')
@@ -999,7 +1079,7 @@ class ReclaimProviderBuilder:
                             "urlType": "CONSTANT",
                             "method": flow_data['method'],
                             "responseMatches": response_matches,
-                            "responseRedactions": response_redactions,
+                            "responseRedactions": [],
                             "bodySniff": {
                                 "enabled": False,
                                 "template": ""
@@ -1735,6 +1815,110 @@ class ReclaimProviderBuilder:
 
         return deduplicated
 
+    def _filter_response_matches_by_quality(self, response_matches: List[Dict], response_content: str, threshold: float = 6.5) -> List[Dict]:
+        """按质量分数过滤 responseMatches，仅保留分数>=阈值的
+
+        评分维度（总分 10）：
+        - 命中验证（必需）：3 分（contains/regex 真正命中文本）
+        - 稳定性：0-3 分（命名捕获组/字段名存在/币种与金额同时出现等提高稳定性）
+        - 噪声惩罚：-0~2 分（命中 HTML 注释/script/style/console 等噪声区域扣分）
+        - 上下文线索：0-2 分（附近 120 字符内出现 currency/amount/balance/account 等金融关键词加分）
+
+        Args:
+            response_matches: 原始匹配规则
+            response_content: 响应文本（未压缩）
+            threshold: 过滤阈值
+
+        Returns:
+            过滤后的匹配规则
+        """
+        import re
+
+        def is_hit(rule: Dict) -> bool:
+            value = rule.get('value', '') or ''
+            rtype = (rule.get('type') or 'contains').lower()
+            invert = bool(rule.get('invert'))
+            try:
+                if rtype == 'regex':
+                    ok = re.search(value, response_content) is not None
+                else:
+                    ok = value.strip('"') in response_content
+                return (not invert and ok) or (invert and not ok)
+            except Exception:
+                return False
+
+        def noise_penalty(span: tuple[int, int]) -> float:
+            # 简易区域判断：命中区间前后各取 200 字符，判断是否处于 script/style/注释
+            start, end = span
+            s = max(0, start - 200)
+            e = min(len(response_content), end + 200)
+            ctx = response_content[s:e]
+            penalty = 0.0
+            if re.search(r'<!--.*?-->', ctx, flags=re.S):
+                penalty += 1.0
+            if re.search(r'<script[^>]*>.*?</script>', ctx, flags=re.S|re.I):
+                penalty += 1.0
+            if re.search(r'<style[^>]*>.*?</style>', ctx, flags=re.S|re.I):
+                penalty += 0.5
+            return penalty
+
+        def context_bonus(span: tuple[int, int]) -> float:
+            start, end = span
+            s = max(0, start - 120)
+            e = min(len(response_content), end + 120)
+            ctx = response_content[s:e].lower()
+            bonus = 0.0
+            for kw in ['currency', 'amount', 'balance', 'available', 'current', 'account', '账户', '余额', '金额', '币种']:
+                if kw in ctx:
+                    bonus += 0.4
+            return min(bonus, 2.0)
+
+        def find_span(rule: Dict) -> tuple[int, int] | None:
+            value = rule.get('value', '') or ''
+            rtype = (rule.get('type') or 'contains').lower()
+            try:
+                if rtype == 'regex':
+                    m = re.search(value, response_content)
+                    return (m.start(), m.end()) if m else None
+                else:
+                    val = value.strip('"')
+                    idx = response_content.find(val)
+                    return (idx, idx + len(val)) if idx >= 0 else None
+            except Exception:
+                return None
+
+        filtered: List[Dict] = []
+        for rule in response_matches:
+            # 命中必需
+            if not is_hit(rule):
+                continue
+
+            score = 3.0  # 命中基础分
+
+            # 稳定性：命名捕获组/字段名/币种+金额共现
+            value = rule.get('value', '') or ''
+            rtype = (rule.get('type') or 'contains').lower()
+            if rtype == 'regex' and re.search(r'\?P<\w+>', value):
+                score += 1.5
+            if any(key in value.lower() for key in ['currency', 'amount', 'balance', 'account', 'userName', 'account_number']):
+                score += 1.0
+
+            # 查找命中区间
+            span = find_span(rule)
+            if span:
+                # 噪声惩罚
+                score -= noise_penalty(span)
+                # 上下文线索
+                score += context_bonus(span)
+
+            # 截断到 [0,10]
+            score = max(0.0, min(10.0, score))
+
+            if score >= threshold:
+                filtered.append(rule)
+
+        return filtered
+
     def _deduplicate_response_redactions(self, response_redactions: List[Dict]) -> List[Dict]:
         """去除重复的responseRedactions规则
 
@@ -1854,7 +2038,7 @@ class ReclaimProviderBuilder:
         if self._is_html_response(matched_patterns):
             # 🎯 HTML响应：优先级匹配规则
 
-            # 优先级1：严格规则 - 精确匹配纯净金额（HKD、USD、CNY）
+            # 优先级1：严格规则（早期多条版本）：币种在前且同行邻近
             strict_rules = [
                 {
                     "regex": "HKD.*?(?P<hkd_balance>\\d{1,3}(?:,\\d{3})*\\.\\d{2})",
@@ -1902,47 +2086,23 @@ class ReclaimProviderBuilder:
             print(f"🔍 DEBUG: 测试严格规则，响应内容长度: {len(response_content)}")
             print(f"🔍 DEBUG: 响应内容前200字符: {repr(response_content[:200])}")
 
-            # 记录已成功匹配的货币类型，避免重复
-            matched_currencies = set()
-
-            # 优先级1：测试严格规则
+            # 优先级1：测试严格规则（命中即返回，严格→宽松，匹配到就break）
             for rule in strict_rules:
                 print(f"🔍 DEBUG: 测试严格规则: {rule['description']}")
                 print(f"🔍 DEBUG: 正则表达式: {rule['regex']}")
                 if self._test_regex_match(response_content, rule["regex"]):
-                    rules.append(rule)
-                    print(f"✅ 严格规则有效: {rule['description']}")
-
-                    # 记录已匹配的货币类型
-                    if 'hkd_balance' in rule['regex']:
-                        matched_currencies.add('hkd')
-                    elif 'usd_balance' in rule['regex']:
-                        matched_currencies.add('usd')
-                    elif 'cny_balance' in rule['regex']:
-                        matched_currencies.add('cny')
+                    print(f"✅ 严格规则有效: {rule['description']} -> 采用并结束优先级匹配")
+                    return [rule]
                 else:
                     print(f"❌ 严格规则无效: {rule['description']}")
 
-            # 优先级2：测试宽松规则（只测试严格规则未匹配的货币类型）
+            # 优先级2：测试宽松规则（命中即返回）
             for rule in loose_rules:
-                currency_type = None
-                if 'hkd_balance' in rule['regex']:
-                    currency_type = 'hkd'
-                elif 'usd_balance' in rule['regex']:
-                    currency_type = 'usd'
-                elif 'cny_balance' in rule['regex']:
-                    currency_type = 'cny'
-
-                # 🎯 关键：如果严格规则已经匹配了这个货币类型，跳过宽松规则
-                if currency_type and currency_type in matched_currencies:
-                    print(f"⏭️ 跳过宽松规则（严格规则已匹配）: {rule['description']}")
-                    continue
-
                 print(f"🔍 DEBUG: 测试宽松规则: {rule['description']}")
                 print(f"🔍 DEBUG: 正则表达式: {rule['regex']}")
                 if self._test_regex_match(response_content, rule["regex"]):
-                    rules.append(rule)
-                    print(f"⚠️ 宽松规则有效: {rule['description']}")
+                    print(f"⚠️ 宽松规则有效: {rule['description']} -> 采用并结束优先级匹配")
+                    return [rule]
                 else:
                     print(f"❌ 宽松规则无效: {rule['description']}")
 
@@ -1955,7 +2115,8 @@ class ReclaimProviderBuilder:
                 "isOptional": False
             })
 
-        return rules
+            # 若均未命中，返回空列表，由上层清洗决定是否降级使用通用规则
+            return []
 
     def _test_regex_match(self, content: str, regex_pattern: str) -> bool:
         """测试正则表达式是否能匹配内容"""
@@ -1996,7 +2157,8 @@ class ReclaimProviderBuilder:
         if self._is_json_response(matched_patterns):
             return "\"(?:account[^\"]*|acc[^\"]*?)\":\\s*\"(?P<account_info>[^\"]+)\""
         elif self._is_html_response(matched_patterns):
-            return "(?P<account_info>\\d{8,20}(?=[A-Z])|[A-Z]{2,4}\\d{8,16})"
+            # 避免使用不被 JS 引擎支持的前瞻语法，改为等价形式
+            return "(?P<account_info>[A-Z]{2,4}\\d{8,16}|\\d{8,20}[A-Z])"
         else:
             return "\"(?:account[^\"]*|acc[^\"]*?)\":\\s*\"(?P<account_info>[^\"]+)\""
 
@@ -2648,38 +2810,146 @@ if (document.readyState === 'loading') {{
         # 确保输出目录存在
         os.makedirs(output_dir, exist_ok=True)
 
-        # 使用日期作为文件名后缀（覆盖写）
+        # 使用日期作为文件名后缀（支持同日追加合并）
         date_str = datetime.now().strftime("%Y%m%d")
 
-        # 🎯 构建可索引的provider结构
-        providers_indexed = {}
-        provider_index = {}
+        # 🎯 读取已有文件，基于 URL 进行“追加合并”
+        def _extract_primary_url(p: Dict) -> Optional[str]:
+            try:
+                req_datas = p.get('providerConfig', {}).get('providerConfig', {}).get('requestData', [])
+                if isinstance(req_datas, list) and req_datas:
+                    return req_datas[0].get('url')
+            except Exception:
+                pass
+            return None
 
-        for provider in successful_providers:
-            provider_config = provider.get('providerConfig', {})
-            provider_id = provider_config.get('providerId')
+        providers_file = os.path.join(output_dir, f"reclaim_providers_{date_str}.json")
+        existing_data: Dict[str, Any] = {}
+        existing_providers: Dict[str, Dict] = {}
+        if os.path.exists(providers_file):
+            try:
+                with open(providers_file, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                    existing_providers = existing_data.get('providers', {}) or {}
+            except Exception as e:
+                print(f"⚠️  读取已有providers文件失败，忽略并重新生成: {e}")
+                existing_data = {}
+                existing_providers = {}
 
-            if not provider_id:
-                print(f"⚠️  跳过没有providerId的provider")
+        # 构建 URL -> providerId 映射（来自已有文件）
+        url_to_provider_id: Dict[str, str] = {}
+        for pid, prov in existing_providers.items():
+            u = _extract_primary_url(prov)
+            if u:
+                url_to_provider_id[u] = pid
+
+        # 基于 URL 合并：
+        merged_providers: Dict[str, Dict] = dict(existing_providers)
+
+        for new_provider in successful_providers:
+            new_cfg = new_provider.get('providerConfig', {})
+            new_pid = new_cfg.get('providerId')
+            new_url = _extract_primary_url(new_provider)
+            if not new_pid or not new_url:
+                print("⚠️  跳过无效provider（缺少providerId或url）")
                 continue
 
-            # 添加到索引结构
-            providers_indexed[provider_id] = provider
+            if new_url in url_to_provider_id:
+                # URL 已存在：复用存量 providerId，其余内容用新内容覆盖
+                exist_pid = url_to_provider_id[new_url]
+                # 强制把新provider的 providerId 改为存量的
+                try:
+                    new_provider['providerConfig']['providerId'] = exist_pid
+                except Exception:
+                    pass
+                merged_providers[exist_pid] = new_provider
+            else:
+                # 新 URL：直接追加（尾部添加的语义，这里以新增键插入实现）
+                merged_providers[new_pid] = new_provider
+                url_to_provider_id[new_url] = new_pid
 
-            # 构建索引元数据
-            metadata = provider_config.get('providerConfig', {}).get('metadata', {})
-            provider_index[provider_id] = {
+        # 清理：移除 responseMatches 为空的存量与新条目
+        def _has_nonempty_matches(p: Dict) -> bool:
+            try:
+                req_datas = p.get('providerConfig', {}).get('providerConfig', {}).get('requestData', [])
+                if not isinstance(req_datas, list) or not req_datas:
+                    return False
+                # 若任意一条 requestData 的 responseMatches 非空，则保留
+                for rd in req_datas:
+                    rms = rd.get('responseMatches', [])
+                    if isinstance(rms, list) and len(rms) > 0:
+                        return True
+                return False
+            except Exception:
+                return False
+
+        cleaned_providers: Dict[str, Dict] = {
+            pid: prov for pid, prov in merged_providers.items() if _has_nonempty_matches(prov)
+        }
+
+        # 规范化URL去重：忽略易变参数后合并，仅保留更优的一条（responseMatches更多）
+        def _normalize_url_key(url: str) -> str:
+            try:
+                pr = urlparse(url)
+                qs = parse_qs(pr.query, keep_blank_values=True)
+                drop = {k.lower() for k in ['dse_sessionId', 'mcp_timestamp', 'dse_pageId', 'sessionId', 'timestamp', '_t', '_ts', 'ts']}
+                kept = []
+                for k, vals in qs.items():
+                    if k.lower() in drop:
+                        continue
+                    for v in vals:
+                        kept.append((k, v))
+                kept.sort()
+                norm_q = '&'.join([f"{k}={v}" for k, v in kept]) if kept else ''
+                return f"{pr.netloc}{pr.path}?{norm_q}" if norm_q else f"{pr.netloc}{pr.path}"
+            except Exception:
+                return url
+
+        def _extract_primary_url_from_prov(p: Dict) -> str:
+            try:
+                rds = p.get('providerConfig', {}).get('providerConfig', {}).get('requestData', []) or []
+                return rds[0].get('url', '') if rds else ''
+            except Exception:
+                return ''
+
+        def _count_response_matches(p: Dict) -> int:
+            try:
+                total = 0
+                rds = p.get('providerConfig', {}).get('providerConfig', {}).get('requestData', []) or []
+                for rd in rds:
+                    rms = rd.get('responseMatches', []) or []
+                    total += len(rms)
+                return total
+            except Exception:
+                return 0
+
+        deduped: Dict[str, Dict] = {}
+        for pid, prov in cleaned_providers.items():
+            url = _extract_primary_url_from_prov(prov)
+            key = _normalize_url_key(url) if url else pid
+            if key not in deduped:
+                deduped[key] = prov
+            else:
+                if _count_response_matches(prov) > _count_response_matches(deduped[key]):
+                    deduped[key] = prov
+
+        # 重新构建索引
+        providers_indexed = {prov.get('providerConfig', {}).get('providerId', pid): prov for pid, prov in cleaned_providers.items() if prov in deduped.values()}
+        provider_index: Dict[str, Any] = {}
+        for pid, prov in providers_indexed.items():
+            prov_cfg = prov.get('providerConfig', {})
+            metadata = prov_cfg.get('providerConfig', {}).get('metadata', {})
+            provider_index[pid] = {
                 "institution": metadata.get('institution', ''),
                 "api_type": metadata.get('api_type', ''),
                 "priority_level": metadata.get('priority_level', 'medium'),
                 "value_score": metadata.get('value_score', 0),
                 "confidence_score": metadata.get('confidence_score', 0.0),
                 "created_at": metadata.get('generated_at', ''),
-                "config_id": provider_config.get('id', '')
+                "config_id": prov_cfg.get('id', '')
             }
 
         # 保存成功的providers（新的可索引结构）
-        providers_file = os.path.join(output_dir, f"reclaim_providers_{date_str}.json")
         providers_output = {
             "metadata": {
                 "generated_at": datetime.now().isoformat(),

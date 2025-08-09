@@ -8,11 +8,15 @@ import json
 import time
 import time
 from typing import Dict, List, Optional, Any, Tuple
+from urllib.parse import urlparse
+import importlib.util
+from pathlib import Path
 from mitmproxy import http
 from task_session_db import get_task_session_db, SessionStatus
 from provider_query import get_provider_query
 from url_matcher import URLMatcher
 from attestor_db import get_attestor_db
+from http_to_attestor_converter import HttpToAttestorConverter
 
 
 class SessionBasedMatcher:
@@ -23,6 +27,7 @@ class SessionBasedMatcher:
         self.provider_query = get_provider_query()
         self.url_matcher = URLMatcher()
         self.attestor_db = get_attestor_db()
+        self.api_value_filter = self._load_api_value_filter()
 
         # 设置匹配参数
         self.url_matcher.set_similarity_threshold(0.8)  # 80%相似度阈值
@@ -39,6 +44,16 @@ class SessionBasedMatcher:
         Returns:
             匹配结果字典，如果匹配成功返回匹配信息，否则返回None
         """
+        # 0. 前置清洗：调用 feature-library 过滤低价值/静态资源 API
+        try:
+            url_for_filter = flow.request.pretty_url
+            filter_result = self.api_value_filter.filter_and_score_api(url_for_filter, original_score=20)
+            if filter_result.get('should_exclude') or filter_result.get('final_recommendation') == 'exclude':
+                return None
+        except Exception:
+            # 过滤异常时，不阻塞后续流程
+            pass
+
         request_url = flow.request.pretty_url
 
         # 1. 获取所有pending状态的sessions
@@ -60,16 +75,8 @@ class SessionBasedMatcher:
                 print(f"⚠️  Session {session_id} 缺少providerId，跳过")
                 continue
 
-            # 3. 通过providerId检索provider配置
-            provider_urls = self.provider_query.get_provider_urls(provider_id)
-
-            if not provider_urls:
-                # 只在调试模式下打印这些信息
-                # print(f"⚠️  Provider {provider_id} 没有找到URL配置")
-                continue
-
-            # 4. 尝试匹配URL
-            match_result = self._match_url_with_provider_urls(request_url, provider_urls)
+            # 3. 尝试匹配URL（结合provider的method信息）
+            match_result = self._match_url_with_provider(request_url, flow, provider_id)
 
             if match_result:
                 # 只有匹配成功时才打印所有日志
@@ -142,54 +149,39 @@ class SessionBasedMatcher:
             print(f"❌ 无法找到匹配的requestData配置")
             return {}
 
-        # 4. 构建基础参数 - 🎯 修复：按照参考配置格式，Host和Connection放在params.headers中
+        # 4. 构建基础参数 - 分离认证头部和普通头部
+        request_headers_dict = dict(flow.request.headers)
+        basic_headers, sensitive_headers = self._split_headers(request_headers_dict)
+
         params = {
             'url': flow.request.pretty_url,  # 使用实际请求的URL
             'method': flow.request.method,
-            'geoLocation': 'HK',  # 🎯 添加地理位置
-            'headers': {
-                'Host': flow.request.host,
-                'Connection': 'close'
-            },  # 🎯 修复：按照参考配置，只放Host和Connection
+            'geoLocation': 'HK',
+            'headers': basic_headers,  # 普通请求头放入 params.headers
             'body': '',
             'responseMatches': self._convert_response_matches_format(matched_request_data.get('responseMatches', [])),
             'responseRedactions': self._convert_redactions_format(matched_request_data.get('responseRedactions', []))
         }
 
+        # 构建secretParams - 按照attestor-core的期望格式，不包含headers字段
+        secret_params = {}
+
+        # 特殊处理Cookie和Authorization
+        for key, value in sensitive_headers.items():
+            key_lower = key.lower()
+            if key_lower == 'cookie':
+                secret_params['cookieStr'] = value
+            elif key_lower == 'authorization':
+                secret_params['authorisationHeader'] = value
+
         # 构建attestor_params的正确结构 - 🎯 添加必要的顶层字段
         attestor_params = {
             'name': 'http',  # 🎯 添加name字段
             'params': params,
-            'secretParams': {
-                'headers': {}
-            }
+            'secretParams': secret_params
         }
 
-        # 5. 处理headers - 从实际请求中提取
-        request_headers = dict(flow.request.headers)
-
-        # 5.1 基础headers（总是需要的）- 🎯 确保关键headers不被redacted
-        essential_headers = [
-            'host', 'user-agent', 'accept', 'accept-language',
-            'accept-encoding', 'connection', 'cookie', 'referer',
-            'content-type', 'content-length', 'authorization',
-            'origin', 'x-requested-with', 'sec-fetch-site',
-            'sec-fetch-mode', 'sec-fetch-dest', 'sec-ch-ua',
-            'sec-ch-ua-mobile', 'sec-ch-ua-platform'
-        ]
-
-
-
-        for header_name in essential_headers:
-            header_value = request_headers.get(header_name) or request_headers.get(header_name.title())
-            if header_value:
-                attestor_params['secretParams']['headers'][header_name] = header_value
-
-        # 5.2 动态补充其他headers - 🎯 所有headers都放在secretParams中
-        for header_name, header_value in request_headers.items():
-            header_lower = header_name.lower()
-            if header_lower not in attestor_params['secretParams']['headers'] and not header_lower.startswith(':'):
-                attestor_params['secretParams']['headers'][header_name] = header_value
+        # 5. headers 已放入 params.headers
 
         # 6. 处理body - 🎯 修复：确保body与Content-Length一致
         if flow.request.content and len(flow.request.content) > 0:
@@ -204,33 +196,36 @@ class SessionBasedMatcher:
             params['body'] = ""
             print(f"🔍 使用空body: 长度=0")
 
-        # 6.1 🎯 修复：动态更新Content-Length以匹配实际body长度
+        # 6.1 动态更新Content-Length以匹配实际body长度（更新到 params.headers）
         actual_body_length = len(params['body'].encode('utf-8'))
-        attestor_params['secretParams']['headers']['content-length'] = str(actual_body_length)
-        print(f"🔍 更新Content-Length: {actual_body_length}")
+        params_headers_lower = {k.lower(): k for k in params['headers'].keys()}
+        key_in_headers = params_headers_lower.get('content-length')
+        if key_in_headers:
+            params['headers'][key_in_headers] = str(actual_body_length)
+        else:
+            # 默认使用小写键名以保持与实际请求一致
+            params['headers']['content-length'] = str(actual_body_length)
+        print(f"🔍 更新Content-Length到 params.headers: {actual_body_length}")
 
-        # 7. 添加cookieStr字段（attestor-core需要）
-        cookie_header = request_headers.get('cookie') or request_headers.get('Cookie')
-        if cookie_header:
-            attestor_params['secretParams']['cookieStr'] = cookie_header
+        # 7. 规范化 headers 以满足 attestor-core http provider 的要求（强制 Connection: close 等）
+        try:
+            _converter = HttpToAttestorConverter()
+            _converter._enforce_attestor_header_requirements(params['headers'], params['body'])  # noqa: SLF001 私有方法，受控调用
+        except Exception as _e:
+            # 规范化失败不应阻塞流程，打印一次调试信息
+            print(f"⚠️ headers规范化失败（忽略）：{_e}")
 
-        # 8. 添加session相关信息到secretParams（保持headers不被覆盖）
-        attestor_params['secretParams'].update({
-            'session_id': session.get('id'),
-            'task_id': session.get('taskId'),
-            'provider_id': provider_id
-        })
+        # 8. Cookie 等认证信息已放入 secretParams.headers 中
 
 
 
         print(f"✅ 构建完成: URL={params['url'][:100]}...")
         print(f"   方法: {params['method']}")
-        print(f"   Params Headers: {len(params['headers'])}")
-        print(f"   SecretParams Headers: {len(attestor_params['secretParams']['headers'])}")
+        print(f"   普通Headers: {len(params['headers'])}")
+        print(f"   SecretParams: {list(attestor_params['secretParams'].keys())}")
         print(f"   Body长度: {len(params['body'])}")
         print(f"   ResponseMatches数量: {len(params['responseMatches'])}")
         print(f"   ResponseRedactions数量: {len(params['responseRedactions'])}")
-        print(f"   SecretParams: {list(attestor_params['secretParams'].keys())}")
 
         # 🔍 详细记录responseRedactions，用于分析extractedParameters问题
         print(f"🔍 详细的ResponseRedactions配置:")
@@ -351,11 +346,6 @@ class SessionBasedMatcher:
 
             # 匹配规则：只有综合相似度达到阈值才算匹配
             if similarity_result['is_match'] and similarity_result['composite_score'] > best_score:
-                # 只在找到匹配时才打印详细信息
-                print(f"  🔗 比较URL: {provider_url}")
-                print(f"     相似度: {similarity_result['composite_score']:.3f}")
-                print(f"     基础URL匹配: {similarity_result['base_exact_match']}")
-
                 best_match = {
                     'matched_url': provider_url,
                     'similarity_score': similarity_result['composite_score'],
@@ -365,6 +355,214 @@ class SessionBasedMatcher:
                 best_score = similarity_result['composite_score']
 
         return best_match
+
+    def _diagnose_best_similarity_any(self, request_url: str, provider_urls: List[str]) -> Optional[Dict[str, Any]]:
+        """不考虑阈值，返回最高分的相似度结果用于诊断日志"""
+        best_url = None
+        best_res = None
+        best_score = -1.0
+        for provider_url in provider_urls:
+            res = self.url_matcher.calculate_url_similarity(request_url, provider_url)
+            if res['composite_score'] > best_score:
+                best_score = res['composite_score']
+                best_url = provider_url
+                best_res = res
+        if best_res is None:
+            return None
+        return {
+            'matched_url': best_url,
+            'similarity_score': best_res['composite_score'],
+            'base_exact_match': best_res['base_exact_match'],
+            'similarity_details': best_res
+        }
+
+    def _is_static_resource(self, flow: http.HTTPFlow) -> bool:
+        """基于URL路径快速识别静态资源请求（css/js/图片/字体/视频等）"""
+        try:
+            path = urlparse(flow.request.pretty_url).path.lower()
+        except Exception:
+            return False
+
+        # 常见静态资源后缀
+        static_exts = (
+            '.css', '.js', '.mjs', '.map',
+            '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico',
+            '.woff', '.woff2', '.ttf', '.eot',
+            '.mp4', '.webm', '.avi', '.mov',
+            '.pdf', '.apk', '.exe', '.dmg',
+            '.zip', '.tar', '.gz', '.7z', '.rar'
+        )
+
+        if any(path.endswith(ext) for ext in static_exts):
+            return True
+
+        # 常见静态目录关键词
+        static_dirs = (
+            '/static/', '/assets/', '/images/', '/imgs/', '/img/', '/fonts/', '/media/', '/styles/', '/scripts/'
+        )
+        if any(seg in path for seg in static_dirs):
+            return True
+
+        return False
+
+    def _load_api_value_filter(self):
+        """动态加载 feature-library 的 APIValueFilter（feature-library 目录含连字符，不能直接import）"""
+        try:
+            current_dir = Path(__file__).resolve().parent  # mitmproxy_addons
+            project_root = current_dir.parent  # mitmproxy2swagger
+            filter_py = project_root / "feature-library" / "filter_features" / "api_value_filter.py"
+            spec = importlib.util.spec_from_file_location("api_value_filter", str(filter_py))
+            module = importlib.util.module_from_spec(spec)
+            assert spec and spec.loader
+            spec.loader.exec_module(module)  # type: ignore
+            APIValueFilter = getattr(module, "APIValueFilter")
+            return APIValueFilter()
+        except Exception:
+            # 失败时返回一个简易兜底对象，始终不过滤
+            class _NoopFilter:
+                def filter_and_score_api(self, url: str, original_score: int, response_content: str = ""):
+                    return {
+                        'url': url,
+                        'original_score': original_score,
+                        'should_exclude': False,
+                        'final_recommendation': 'keep'
+                    }
+            return _NoopFilter()
+
+    def _match_url_with_provider(self, request_url: str, flow, provider_id: str) -> Optional[Dict[str, Any]]:
+        """综合URL、HTTP方法、消息体长度进行匹配，命中则给高分"""
+        provider = self.provider_query.get_provider_by_id(provider_id)
+        if not provider:
+            return None
+
+        # 提取requestData
+        provider_config = provider.get('providerConfig', {})
+        inner_config = provider_config.get('providerConfig', provider_config)
+        request_data_list = inner_config.get('requestData', []) or []
+
+        # 收集所有候选URL
+        provider_urls = []
+        for rd in request_data_list:
+            if isinstance(rd, dict) and rd.get('url'):
+                provider_urls.append(rd['url'])
+
+        if not provider_urls:
+            return None
+
+        # 先用原有URL相似度找最佳匹配（受阈值影响）
+        best = self._match_url_with_provider_urls(request_url, provider_urls)
+        if not best:
+            # 阈值下未命中时，尝试使用“增强判定”直接拉升分数（基于 base_exact/method/cookie/body）
+            diag = self._diagnose_best_similarity_any(request_url, provider_urls)
+            if diag:
+                matched_url_diag = diag['matched_url']
+                # 找到对应的requestData
+                matched_request_data_diag = None
+                for rd in request_data_list:
+                    if isinstance(rd, dict) and rd.get('url') == matched_url_diag:
+                        matched_request_data_diag = rd
+                        break
+
+                details = diag.get('similarity_details', {})
+                base_exact = bool(details.get('base_exact_match'))
+
+                req_method = (flow.request.method or '').upper()
+                cfg_method = (matched_request_data_diag.get('method') or '').upper() if isinstance(matched_request_data_diag, dict) else ''
+                method_ok = True if not cfg_method else (req_method == cfg_method)
+
+                headers_lower = {k.lower(): v for k, v in dict(flow.request.headers).items()}
+                has_cookie_or_auth = ('cookie' in headers_lower) or ('authorization' in headers_lower)
+
+                body_bytes = flow.request.content or b''
+                body_empty = (len(body_bytes) == 0)
+
+                if base_exact and method_ok and (body_empty or has_cookie_or_auth):
+                    score = max(diag['similarity_score'], 0.95)
+                    try:
+                        reason = "空body" if body_empty else "有cookie/auth"
+                        print("  🔎 URL比对:")
+                        print(f"     请求: {request_url}")
+                        print(f"     配置: {matched_url_diag}")
+                        print(f"     分数: {score:.3f} | base_exact=True | method匹配 | {reason} -> 提升为高分")
+                    except Exception:
+                        pass
+                    return {
+                        'matched_url': matched_url_diag,
+                        'similarity_score': score,
+                        'base_exact_match': True,
+                        'similarity_details': details
+                    }
+
+                # 若仍不满足增强判定，输出一次诊断日志（展示最高分及原因）
+                try:
+                    print("  🔎 URL比对:")
+                    print(f"     请求: {request_url}")
+                    print(f"     配置: {matched_url_diag}")
+                    print(f"     分数: {diag['similarity_score']:.3f} | base_exact={details.get('base_exact_match')} | query_similarity={details.get('query_similarity')}")
+                    if details.get('base_exact_match') and details.get('query_similarity') == 0:
+                        print("     说明: 基础URL完全匹配，query为空 -> 使用公式 0.3 + 0.7*0 = 0.3")
+                except Exception:
+                    pass
+            return None
+
+        matched_url = best['matched_url']
+        score = best['similarity_score']
+
+        # 找到对应的requestData，检查method与body
+        matched_request_data = None
+        for rd in request_data_list:
+            if isinstance(rd, dict) and rd.get('url') == matched_url:
+                matched_request_data = rd
+                break
+
+        # 判定条件：URL基础一致、method一致且拦截请求体为空
+        try:
+            base_exact = self.url_matcher.match_base_url_exact(request_url, matched_url)
+        except Exception:
+            base_exact = False
+
+        method_ok = True
+        req_method = (flow.request.method or '').upper()
+        cfg_method = (matched_request_data.get('method') or '').upper() if isinstance(matched_request_data, dict) else ''
+        if cfg_method:
+            method_ok = (req_method == cfg_method)
+
+        # 请求体是否为空
+        body_bytes = flow.request.content or b''
+        body_empty = (len(body_bytes) == 0)
+
+        headers_lower = {k.lower(): v for k, v in dict(flow.request.headers).items()}
+        has_cookie_or_auth = ('cookie' in headers_lower) or ('authorization' in headers_lower)
+
+        # 如果条件满足（空body 或 cookie/auth 证明为会话请求），直接提升为高分，确保通过
+        if base_exact and method_ok and (body_empty or has_cookie_or_auth):
+            score = max(score, 0.95)
+            boosted = {
+                'matched_url': matched_url,
+                'similarity_score': score,
+                'base_exact_match': True,
+                'similarity_details': best.get('similarity_details', {})
+            }
+            try:
+                reason = "空body" if body_empty else "有cookie/auth"
+                print("  🔎 URL比对:")
+                print(f"     请求: {request_url}")
+                print(f"     配置: {matched_url}")
+                print(f"     分数: {score:.3f} | base_exact=True | method匹配 | {reason} -> 提升为高分")
+            except Exception:
+                pass
+            return boosted
+
+        # 正常命中，打印一次最终比对日志
+        try:
+            details = best.get('similarity_details', {})
+            print("  🔎 URL比对:")
+            print(f"     请求: {request_url}")
+            print(f"     配置: {matched_url}")
+            print(f"     分数: {score:.3f} | base_exact={details.get('base_exact_match')} | query_similarity={details.get('query_similarity'):.3f}")
+        except Exception:
+            pass
+        return best
 
     def _check_attestor_response(self, task_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -523,6 +721,34 @@ class SessionBasedMatcher:
             'updated_sessions': updated_count,
             'statistics': stats
         }
+
+    def _split_headers(self, headers: Dict[str, str]) -> Tuple[Dict[str, str], Dict[str, str]]:
+        """
+        分离基础headers和敏感headers
+
+        Args:
+            headers: 原始headers字典
+
+        Returns:
+            (basic_headers, sensitive_headers) 元组
+        """
+        # 敏感headers，需要放到secretParams中
+        sensitive_header_names = {
+            'cookie', 'authorization', 'x-auth-token', 'x-api-key',
+            'x-session-token', 'x-csrf-token', 'x-nonce'
+        }
+
+        basic_headers = {}
+        sensitive_headers = {}
+
+        for key, value in headers.items():
+            key_lower = key.lower()
+            if key_lower in sensitive_header_names:
+                sensitive_headers[key] = value
+            else:
+                basic_headers[key] = value
+
+        return basic_headers, sensitive_headers
 
 
 

@@ -182,7 +182,9 @@ python3 example_usage.py
     "body": "",
     "headers": {
       "Host": "example.com",
-      "Connection": "close"
+      "Connection": "close",
+      "User-Agent": "Mozilla/5.0...",
+      "Authorization": "Bearer token"
     },
     "responseMatches": [
       {
@@ -195,13 +197,6 @@ python3 example_usage.py
         "regex": "pattern1"
       }
     ]
-  },
-  "secretParams": {
-    "cookieStr": "session=abc123",
-    "headers": {
-      "User-Agent": "Mozilla/5.0...",
-      "Authorization": "Bearer token"
-    }
   }
 }
 ```
@@ -211,7 +206,6 @@ python3 example_usage.py
 PRIVATE_KEY=0x0123... npm run create:claim -- \
   --name "http" \
   --params '{"url":"...","method":"GET",...}' \
-  --secretParams '{"cookieStr":"...","headers":{...}}' \
   --attestor local
 ```
 

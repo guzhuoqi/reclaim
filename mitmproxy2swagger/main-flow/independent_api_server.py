@@ -44,6 +44,26 @@ import uvicorn
 # 导入主流程相关模块
 from integrated_main_pipeline import IntegratedMainPipeline
 from dynamic_config import dynamic_config
+from pathlib import Path
+from collections import OrderedDict
+
+# Task Session 数据库
+try:
+    from ..mitmproxy_addons.task_session_db import TaskSessionDB  # 当作模块引用运行
+except Exception:
+    # 直接运行该文件时，使用绝对路径导入
+    import sys
+    CURRENT_DIR = Path(__file__).resolve().parent
+    PROJECT_ROOT = CURRENT_DIR.parent  # mitmproxy2swagger
+    ADDONS_DIR = PROJECT_ROOT / "mitmproxy_addons"
+    if str(ADDONS_DIR) not in sys.path:
+        sys.path.insert(0, str(ADDONS_DIR))
+    from task_session_db import TaskSessionDB  # type: ignore
+try:
+    from ..mitmproxy_addons.attestor_db import AttestorDB  # 当作模块引用运行
+except Exception:
+    # 同步添加 addons 目录到路径后再导入
+    from attestor_db import AttestorDB  # type: ignore
 
 
 
@@ -372,7 +392,9 @@ async def root():
             "trigger": "/trigger",
             "upload": "/upload-and-trigger",
             "providers": "/providers",
-            "files": "/files"
+            "files": "/files",
+            "task_sessions_create": "/task-sessions",
+            "task_session_response": "/task-sessions/{session_id}/response"
         }
     }
 
@@ -560,6 +582,139 @@ async def trigger_pipeline(request: TriggerRequest):
             detail=f"主流程执行失败: {error_msg}"
         )
 
+
+class CreateTaskSessionRequest(BaseModel):
+    providerId: str = Field(..., description="Provider唯一ID（唯一入参）")
+
+
+def get_task_sessions_dir() -> str:
+    """获取 task_sessions 存储目录（与仓库中 mitmproxy_addons/data/task_sessions 对齐）"""
+    current_dir = Path(__file__).resolve().parent  # main-flow
+    project_root = current_dir.parent  # mitmproxy2swagger
+    sessions_dir = project_root / "mitmproxy_addons" / "data" / "task_sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    return str(sessions_dir)
+
+
+def get_attestor_db_dir() -> str:
+    """获取 attestor_db 存储目录（与插件数据目录对齐）"""
+    current_dir = Path(__file__).resolve().parent  # main-flow
+    project_root = current_dir.parent  # mitmproxy2swagger
+    db_dir = project_root / "mitmproxy_addons" / "data" / "attestor_db"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    return str(db_dir)
+
+
+@app.post("/task-sessions", response_model=APIResponse)
+async def create_task_session(payload: CreateTaskSessionRequest):
+    """新增一条 task_session 记录"""
+    try:
+        base_dir = get_task_sessions_dir()
+        db = TaskSessionDB(base_dir=base_dir)
+
+        session_id = db.create_session(
+            task_id="",
+            provider_id=payload.providerId,
+            additional_data={
+                # 与示例保持一致，提供 completed_at 字段
+                "completed_at": time.time()
+            }
+        )
+
+        if not session_id:
+            raise HTTPException(status_code=500, detail="创建session失败")
+
+        # 读取刚创建的记录返回
+        record = db.get_session(session_id)
+
+        return APIResponse(
+            success=True,
+            message="创建session成功",
+            data={
+                "session": record,
+                "session_id": session_id,
+                "base_dir": base_dir
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"创建task session失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"创建task session失败: {str(e)}")
+
+
+@app.get("/task-sessions/{session_id}/response", response_model=APIResponse)
+async def get_response_by_session(session_id: str):
+    """根据 session_id 查询对应的 attestor 响应，只返回 claim 对象；
+    若 claim 中存在数组且元素为对象，则将对象压缩为单行字符串。
+    """
+    try:
+        # 1) 读取 session 记录
+        ts_db = TaskSessionDB(base_dir=get_task_sessions_dir())
+        session_record = ts_db.get_session(session_id)
+        if not session_record:
+            raise HTTPException(status_code=404, detail="未找到对应的session记录")
+
+        task_id = session_record.get("taskId") or session_record.get("task_id") or ""
+        if not task_id:
+            raise HTTPException(status_code=400, detail="该session没有有效的taskId，无法索引响应")
+
+        # 2) 通过 taskId 从 attestor_db 获取响应
+        attestor_db = AttestorDB(base_dir=get_attestor_db_dir())
+        response_record = attestor_db.get_response(task_id)
+        if not response_record:
+            raise HTTPException(status_code=404, detail="未找到对应的响应记录")
+
+        # 3) 只提取 claim 对象
+        data_section = response_record.get("data") if isinstance(response_record, dict) else None
+        claim_obj: Optional[Dict[str, Any]] = None
+
+        if isinstance(data_section, dict):
+            # 优先从 receipt.claim 提取
+            receipt = data_section.get("receipt")
+            if isinstance(receipt, dict) and isinstance(receipt.get("claim"), dict):
+                claim_obj = receipt.get("claim")
+            # 兼容直接存在的 claim 字段
+            if claim_obj is None and isinstance(data_section.get("claim"), dict):
+                claim_obj = data_section.get("claim")
+
+        if not isinstance(claim_obj, dict):
+            raise HTTPException(status_code=404, detail="响应中未找到claim对象")
+
+        # 4) 压缩 claim 中数组里的对象为单行字符串
+        def compact_array_objects(value: Any) -> Any:
+            if isinstance(value, list):
+                compacted = []
+                for item in value:
+                    if isinstance(item, dict):
+                        try:
+                            compacted.append(json.dumps(item, ensure_ascii=False, separators=(",", ":")))
+                        except Exception:
+                            compacted.append(item)
+                    else:
+                        compacted.append(compact_array_objects(item))
+                return compacted
+            if isinstance(value, dict):
+                return {k: compact_array_objects(v) for k, v in value.items()}
+            return value
+
+        compacted_claim = compact_array_objects(claim_obj)
+
+        return APIResponse(
+            success=True,
+            message="查询成功",
+            data={
+                "session_id": session_id,
+                "status": session_record.get("status"),
+                "taskId": task_id,
+                "claim": compacted_claim
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"查询响应失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"查询响应失败: {str(e)}")
 
 @app.post("/upload-and-trigger")
 async def upload_and_trigger(

@@ -59,6 +59,81 @@ fi
 
 echo "📍 检测到本机IP: $LOCAL_IP"
 
+# 后台启动API服务器函数
+start_api_server_background() {
+    echo "🚀 后台启动API服务器..."
+
+    # 切换到main-flow目录
+    cd "$SCRIPT_DIR/main-flow"
+
+    # 检查核心文件
+    if [ ! -f "independent_api_server.py" ]; then
+        echo "❌ 错误: 未找到 independent_api_server.py"
+        return 1
+    fi
+
+    # 停止现有的API服务器进程
+    echo "🛑 停止现有API服务器进程..."
+    API_PIDS=$(ps aux | grep -E "independent_api_server\.py" | grep -v grep | awk '{print $2}')
+    if [ -n "$API_PIDS" ]; then
+        echo "📍 发现运行中的API服务器进程: $API_PIDS"
+        for pid in $API_PIDS; do
+            kill $pid 2>/dev/null
+        done
+        sleep 2
+    fi
+
+    # 设置环境变量
+    export PYTHONPATH="${PYTHONPATH}:$(pwd)"
+    export API_SERVER_HOST="0.0.0.0"
+    export API_SERVER_PORT="8000"
+    export API_SERVER_LOCAL_IP="$LOCAL_IP"
+
+    # 创建必要目录
+    mkdir -p data temp uploads logs
+
+    # 显示API服务器配置信息
+    echo "📋 API服务器配置:"
+    echo "   🌐 绑定地址: $API_SERVER_HOST:$API_SERVER_PORT"
+    echo "   📍 本机IP: $API_SERVER_LOCAL_IP"
+    echo "   🔗 访问地址: http://$API_SERVER_LOCAL_IP:$API_SERVER_PORT"
+    echo "   📖 API文档: http://$API_SERVER_LOCAL_IP:$API_SERVER_PORT/docs"
+    echo "   🔍 健康检查: http://$API_SERVER_LOCAL_IP:$API_SERVER_PORT/health"
+    echo ""
+
+    # 后台启动API服务器
+    echo "🎯 后台启动时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    nohup python3 independent_api_server.py > logs/api_server_background.log 2>&1 &
+    API_SERVER_PID=$!
+    echo "✅ API服务器已后台启动，PID: $API_SERVER_PID"
+
+    # 保存PID到文件
+    echo $API_SERVER_PID > /tmp/api_server.pid
+
+    # 等待服务器启动
+    echo "⏳ 等待API服务器启动..."
+    sleep 5
+
+    # 检查服务器是否正常启动
+    if kill -0 $API_SERVER_PID 2>/dev/null; then
+        echo "✅ API服务器启动成功"
+
+        # 测试连接
+        if curl -s -f "http://$API_SERVER_LOCAL_IP:$API_SERVER_PORT/health" > /dev/null 2>&1; then
+            echo "✅ API服务器健康检查通过"
+        else
+            echo "⚠️  API服务器健康检查失败，但进程正在运行"
+        fi
+    else
+        echo "❌ API服务器启动失败"
+        echo "💡 请检查日志: logs/api_server_background.log"
+        return 1
+    fi
+
+    # 返回到脚本目录
+    cd "$SCRIPT_DIR"
+}
+
 # 启动 attestor-core 服务
 echo ""
 echo "🚀 启动 attestor-core 服务..."
@@ -69,7 +144,11 @@ ATTESTOR_PID=$!
 echo "⏳ 等待 attestor-core 服务启动..."
 sleep 3
 
-# 启动 mitmproxy attestor proxy 
+# 启动 API 服务器 (第二个服务)
+echo "🚀 启动 API 服务器..."
+start_api_server_background
+
+# 启动 mitmproxy attestor proxy (第三个服务)
 echo "🚀 启动 mitmproxy attestor proxy..."
 echo "   代理地址: $LOCAL_IP:8080"
 echo "   Web界面: http://$LOCAL_IP:8081"
@@ -79,10 +158,13 @@ PROXY_PID=$!
 echo "✅ 所有服务已启动"
 echo "================================="
 echo "📊 attestor-core PID: $ATTESTOR_PID"
+echo "📊 API服务器 PID: $API_SERVER_PID"
 echo "📊 mitmproxy proxy PID: $PROXY_PID"
 echo ""
 echo "🌐 服务地址:"
 echo "   • Attestor Core: http://localhost:3000"
+echo "   • API服务器: http://$LOCAL_IP:8000"
+echo "   • API文档: http://$LOCAL_IP:8000/docs"
 echo "   • Mitmproxy Web: http://$LOCAL_IP:8081"
 echo "   • 代理服务器: $LOCAL_IP:8080"
 echo ""
@@ -97,18 +179,32 @@ echo "================================="
 cleanup() {
     echo ""
     echo "🛑 正在停止所有服务..."
-    
+
     # 停止后台进程
     if [ ! -z "$ATTESTOR_PID" ]; then
         echo "   停止 attestor-core (PID: $ATTESTOR_PID)"
         kill $ATTESTOR_PID 2>/dev/null
     fi
-    
+
+    # 停止API服务器
+    if [ -f "/tmp/api_server.pid" ]; then
+        local api_pid=$(cat /tmp/api_server.pid)
+        if kill -0 $api_pid 2>/dev/null; then
+            echo "   停止 API服务器 (PID: $api_pid)"
+            kill $api_pid 2>/dev/null
+            sleep 2
+            if kill -0 $api_pid 2>/dev/null; then
+                kill -9 $api_pid 2>/dev/null
+            fi
+        fi
+        rm -f /tmp/api_server.pid
+    fi
+
     if [ ! -z "$PROXY_PID" ]; then
         echo "   停止 mitmproxy proxy (PID: $PROXY_PID)"
         kill $PROXY_PID 2>/dev/null
     fi
-    
+
     echo "✅ 所有服务已停止"
     exit 0
 }

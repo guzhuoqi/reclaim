@@ -20,7 +20,7 @@
         "name": "招商永隆银行余额查询",
         "description": "处理招商永隆银行的余额查询API - 严格匹配",
         "domains": [
-          "www.cmbwinglungbank.com"
+          "ignore.www.cmbwinglungbank.com"
         ],
         "paths": [
           "/ibanking/McpCSReqServlet"

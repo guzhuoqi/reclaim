@@ -43,16 +43,16 @@ class HttpToAttestorConverter:
 
         # 敏感headers，需要放到secretParams中
         self.sensitive_headers = {
-            'cookie', 'authorization', 'x-auth-token', 'x-api-key',
-            'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform',
-            'user-agent', 'accept', 'accept-encoding', 'accept-language',
-            'origin', 'referer', 'sec-fetch-site', 'sec-fetch-mode',
-            'sec-fetch-dest', 'x-requested-with'
+            'cookie', 'authorization', 'x-auth-token', 'x-api-key'
         }
 
         # 基础headers，保留在params中
         self.basic_headers = {
-            'host', 'connection', 'content-type', 'content-length'
+            'host', 'connection', 'content-type', 'content-length',
+            'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform',
+            'user-agent', 'accept', 'accept-encoding', 'accept-language',
+            'origin', 'referer', 'sec-fetch-site', 'sec-fetch-mode',
+            'sec-fetch-dest', 'x-requested-with'
         }
 
     def convert_flow_to_attestor_params(
@@ -76,8 +76,9 @@ class HttpToAttestorConverter:
         """
         request = flow.request
 
-        # 分离headers
-        basic_headers, sensitive_headers = self._split_headers(dict(request.headers))
+        # 分离基础headers和敏感headers
+        headers_all = dict(request.headers)
+        basic_headers, sensitive_headers = self._split_headers(headers_all)
 
         # 构建基础参数
         params = {
@@ -88,6 +89,9 @@ class HttpToAttestorConverter:
             "headers": basic_headers
         }
 
+        # 强制满足 attestor-http provider 的要求：Connection 必须为 close
+        self._enforce_attestor_header_requirements(params["headers"], params["body"])
+
         # 添加响应匹配规则
         response_matches, response_redactions = self._build_response_rules(
             response_patterns, custom_patterns
@@ -97,22 +101,16 @@ class HttpToAttestorConverter:
         if response_redactions:
             params["responseRedactions"] = response_redactions
 
-        # 构建secretParams
+        # 构建secretParams - 按照attestor-core的期望格式，不包含headers字段
         secret_params = {}
 
-        # 添加Cookie字符串
-        cookie_header = None
+        # 特殊处理Cookie和Authorization
         for key, value in sensitive_headers.items():
-            if key.lower() == 'cookie':
-                cookie_header = value
-                break
-
-        if cookie_header:
-            secret_params["cookieStr"] = cookie_header
-
-        # 添加敏感headers
-        if sensitive_headers:
-            secret_params["headers"] = sensitive_headers
+            key_lower = key.lower()
+            if key_lower == 'cookie':
+                secret_params['cookieStr'] = value
+            elif key_lower == 'authorization':
+                secret_params['authorisationHeader'] = value
 
         # 构建最终结果
         result = {
@@ -138,13 +136,10 @@ class HttpToAttestorConverter:
 
         for key, value in headers.items():
             key_lower = key.lower()
-            if key_lower in self.basic_headers:
-                basic_headers[key] = value
-            elif key_lower in self.sensitive_headers:
+            if key_lower in self.sensitive_headers:
                 sensitive_headers[key] = value
             else:
-                # 默认放到sensitive_headers中，更安全
-                sensitive_headers[key] = value
+                basic_headers[key] = value
 
         return basic_headers, sensitive_headers
 
@@ -226,7 +221,7 @@ class HttpToAttestorConverter:
         """
         headers = headers or {}
 
-        # 分离headers
+        # 分离基础headers和敏感headers
         basic_headers, sensitive_headers = self._split_headers(headers)
 
         # 构建基础参数
@@ -238,6 +233,9 @@ class HttpToAttestorConverter:
             "headers": basic_headers
         }
 
+        # 强制满足 attestor-http provider 的要求：Connection 必须为 close
+        self._enforce_attestor_header_requirements(params["headers"], params["body"])
+
         # 添加响应匹配规则
         response_matches, response_redactions = self._build_response_rules(
             response_patterns, custom_patterns
@@ -247,22 +245,16 @@ class HttpToAttestorConverter:
         if response_redactions:
             params["responseRedactions"] = response_redactions
 
-        # 构建secretParams
+        # 构建secretParams - 按照attestor-core的期望格式，不包含headers字段
         secret_params = {}
 
-        # 添加Cookie字符串
-        cookie_header = None
+        # 特殊处理Cookie和Authorization
         for key, value in sensitive_headers.items():
-            if key.lower() == 'cookie':
-                cookie_header = value
-                break
-
-        if cookie_header:
-            secret_params["cookieStr"] = cookie_header
-
-        # 添加敏感headers
-        if sensitive_headers:
-            secret_params["headers"] = sensitive_headers
+            key_lower = key.lower()
+            if key_lower == 'cookie':
+                secret_params['cookieStr'] = value
+            elif key_lower == 'authorization':
+                secret_params['authorisationHeader'] = value
 
         # 构建最终结果
         result = {
@@ -272,6 +264,60 @@ class HttpToAttestorConverter:
         }
 
         return result
+
+    def _enforce_attestor_header_requirements(self, headers: Dict[str, str], body: str) -> None:
+        """
+        规范化并强制设置满足 attestor-core http provider 的头部要求：
+        - Connection 必须是 close
+        - 消除大小写重复键（优先使用标准首字母大写）
+        - 当 body 为空时，移除不必要的 Content-Length 或设为 0（可选，保持稳妥）
+        """
+        if not headers:
+            return
+
+        # 统一 Connection
+        # 如果存在任意形式的 connection 头，最终强制为 'close'
+        value_connection = 'close'
+        keys_to_delete = []
+        has_standard_key = False
+        for k in list(headers.keys()):
+            if k.lower() == 'connection':
+                if k != 'Connection':
+                    keys_to_delete.append(k)
+                else:
+                    has_standard_key = True
+        for k in keys_to_delete:
+            # 删除非标准大小写键，避免重复
+            headers.pop(k, None)
+        headers['Connection'] = value_connection
+
+        # 移除 Transfer-Encoding，避免与 Content-Length 冲突
+        for k in list(headers.keys()):
+            if k.lower() == 'transfer-encoding':
+                headers.pop(k, None)
+
+        # 同步 Content-Length 策略
+        body_str = body or ""
+        body_len = len(body_str.encode('utf-8'))
+        # 规范化 Content-Length 大小写，并根据 body 设置
+        cl_keys = [k for k in list(headers.keys()) if k.lower() == 'content-length']
+        for k in cl_keys:
+            if k != 'Content-Length':
+                headers.pop(k, None)
+        # 为空体，强制为 0；非空体，如存在不一致则更新
+        if body_len == 0:
+            headers['Content-Length'] = '0'
+        else:
+            existing = headers.get('Content-Length')
+            if existing != str(body_len):
+                headers['Content-Length'] = str(body_len)
+
+        # 强制请求服务端返回未压缩内容，便于 attestor-core 做字符串匹配
+        ae_keys = [k for k in list(headers.keys()) if k.lower() == 'accept-encoding']
+        for k in ae_keys:
+            if k != 'Accept-Encoding':
+                headers.pop(k, None)
+        headers['Accept-Encoding'] = 'identity'
 
     def add_response_pattern(self, name: str, pattern: str, description: str = ""):
         """
