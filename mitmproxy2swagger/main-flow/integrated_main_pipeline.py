@@ -30,6 +30,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
+from math import floor
 
 # 添加项目路径
 current_dir = Path(__file__).parent
@@ -141,11 +142,12 @@ class IntegratedMainPipeline:
             self.pipeline_state['mitm_status'] = 'error'
             return False, error_msg
 
-    def export_mitm_flows(self, output_file: str = None) -> Optional[str]:
+    def export_mitm_flows(self, output_file: str = None, max_download_bytes: Optional[int] = None) -> Optional[str]:
         """从mitmproxy导出流量数据
 
         Args:
             output_file: 输出文件路径，如果为None则自动生成
+            max_download_bytes: 最大下载字节数，通过curl --max-filesize限制或mitmproxy API查询参数间接控制
 
         Returns:
             导出的文件路径，失败返回None
@@ -156,15 +158,28 @@ class IntegratedMainPipeline:
 
         mitm_host = self.config['mitm_host']
         mitm_port = self.config['mitm_port']
-        url = f"http://{mitm_host}:{mitm_port}/flows/dump"
+        
+        # 构建API URL，如果指定了大小限制，尝试通过查询参数间接控制
+        base_url = f"http://{mitm_host}:{mitm_port}/flows/dump"
+        if max_download_bytes:
+            # 估算流量条数限制（假设平均每条流量约10KB）
+            estimated_flows = max(1, max_download_bytes // (10 * 1024))
+            # 注意：mitmproxy可能不支持limit参数，这里作为尝试
+            url = f"{base_url}?limit={estimated_flows}"
+            print(f"   尝试限制流量条数: {estimated_flows} (基于{max_download_bytes}字节估算)")
+        else:
+            url = base_url
 
         try:
             print(f"📥 开始导出流量数据...")
             print(f"   源地址: {url}")
             print(f"   目标文件: {output_file}")
 
-            # 使用curl命令导出
+            # 使用curl命令导出，可选限制下载大小
             curl_cmd = ['curl', '-s', url]
+            if max_download_bytes:
+                curl_cmd.extend(['--max-filesize', str(max_download_bytes)])
+                print(f"   限制下载大小: {max_download_bytes} bytes ({max_download_bytes / 1024 / 1024:.1f}MB)")
 
             with open(output_file, 'wb') as f:
                 result = subprocess.run(curl_cmd, stdout=f, stderr=subprocess.PIPE)
@@ -174,6 +189,20 @@ class IntegratedMainPipeline:
                 if file_size > 0:
                     print(f"✅ 成功导出流量数据: {file_size} bytes")
                     logger.info(f"流量数据导出成功: {output_file}, {file_size} bytes")
+
+                    # 若文件超过5MB，按规则裁剪
+                    MAX_SIZE = 5 * 1024 * 1024
+                    if file_size > MAX_SIZE:
+                        print("⚠️  导出文件大于5MB，开始按规则裁剪（最近30分钟，且最终不超过5MB）...")
+                        trimmed_file = self._trim_mitm_file(output_file, max_size_bytes=MAX_SIZE, window_minutes=30)
+                        if trimmed_file and os.path.exists(trimmed_file):
+                            output_file = trimmed_file
+                            file_size = os.path.getsize(output_file)
+                            print(f"✅ 裁剪完成: {file_size} bytes -> {output_file}")
+                            logger.info(f"流量数据已裁剪至<=5MB: {output_file}, {file_size} bytes")
+                        else:
+                            print("⚠️  裁剪失败或无可用数据，继续使用原始导出文件")
+
                     self.pipeline_state['export_file'] = output_file
                     self.pipeline_state['steps_completed'].append('export')
                     return output_file
@@ -183,14 +212,121 @@ class IntegratedMainPipeline:
                     return None
             else:
                 error_msg = result.stderr.decode() if result.stderr else "未知错误"
-                print(f"❌ curl导出失败: {error_msg}")
-                logger.error(f"curl导出失败: {error_msg}")
-                return None
+                # curl返回码63表示文件大小超过--max-filesize限制
+                if result.returncode == 63:
+                    print(f"⚠️  下载被中断：文件大小超过限制 ({max_download_bytes} bytes)")
+                    # 检查是否有部分数据被下载
+                    if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                        file_size = os.path.getsize(output_file)
+                        print(f"✅ 已下载部分数据: {file_size} bytes，继续使用")
+                        logger.info(f"部分下载完成: {output_file}, {file_size} bytes")
+                        self.pipeline_state['export_file'] = output_file
+                        self.pipeline_state['steps_completed'].append('export')
+                        return output_file
+                    else:
+                        print(f"❌ 未获取到有效数据")
+                        return None
+                else:
+                    print(f"❌ curl导出失败: {error_msg}")
+                    logger.error(f"curl导出失败: {error_msg}")
+                    return None
 
         except Exception as e:
             print(f"❌ 导出流量数据失败: {e}")
             logger.error(f"导出流量数据失败: {e}")
             self.pipeline_state['errors'].append(f"导出失败: {e}")
+            return None
+
+    def _trim_mitm_file(self, input_file: str, max_size_bytes: int = 5 * 1024 * 1024, window_minutes: int = 30) -> Optional[str]:
+        """将mitm抓包文件按规则裁剪：超过阈值时，仅保留最近window_minutes分钟内的流量；
+        如仍超过阈值，则仅保留最近的部分流量，使文件不大于阈值。
+
+        Returns: 新文件路径，失败返回None
+        """
+        try:
+            from mitmproxy import io as mitm_io
+            from mitmproxy import http as mitm_http
+            import time as _time
+
+            input_size = os.path.getsize(input_file)
+            if input_size <= max_size_bytes:
+                return input_file
+
+            # 读取全部flows并附带时间戳
+            flows: List[Tuple[float, Any]] = []
+            with open(input_file, 'rb') as f:
+                reader = mitm_io.FlowReader(f)
+                for obj in reader.stream():
+                    if isinstance(obj, mitm_http.HTTPFlow) and obj.response is not None:
+                        ts = getattr(obj.request, 'timestamp_start', None)
+                        if ts is None:
+                            # 退化到响应结束时间或当前时间
+                            ts = getattr(obj.response, 'timestamp_end', _time.time())
+                        flows.append((float(ts), obj))
+
+            if not flows:
+                return None
+
+            # 仅在原始文件超限时应用时间窗口
+            latest_ts = max(ts for ts, _ in flows)
+            threshold = latest_ts - window_minutes * 60
+            recent_flows = [flow for ts, flow in flows if ts >= threshold]
+
+            # 若时间窗口无数据，则不应用窗口，使用全部flows
+            candidate_flows = recent_flows if recent_flows else [flow for _, flow in flows]
+
+            # 如候选写出后仍可能超限，估算每flow大小，确定最大N
+            temp_dir = self.config['temp_dir']
+            os.makedirs(temp_dir, exist_ok=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            sample_path = os.path.join(temp_dir, f"_trim_sample_{timestamp}.mitm")
+
+            # 采样前K条计算平均size
+            sample_count = min(50, len(candidate_flows))
+            if sample_count == 0:
+                return None
+            with open(sample_path, 'wb') as wf:
+                writer = mitm_io.FlowWriter(wf)
+                for flow in candidate_flows[:sample_count]:
+                    writer.add(flow)
+            sample_size = os.path.getsize(sample_path)
+            try:
+                os.remove(sample_path)
+            except Exception:
+                pass
+
+            avg_per_flow = max(1, sample_size // sample_count)
+            max_flows = max(1, max_size_bytes // avg_per_flow)
+
+            # 选择最近的max_flows条
+            candidate_flows_sorted = sorted(candidate_flows, key=lambda fl: getattr(fl.request, 'timestamp_start', 0.0) or getattr(fl.response, 'timestamp_end', 0.0) or 0.0, reverse=True)
+            selected = candidate_flows_sorted[:max_flows]
+
+            # 写入最终文件（按时间升序写入更贴近原始顺序）
+            final_flows = list(reversed(selected))
+            out_path = os.path.join(temp_dir, f"flows_recent_{timestamp}.mitm")
+            with open(out_path, 'wb') as wf:
+                writer = mitm_io.FlowWriter(wf)
+                for flow in final_flows:
+                    writer.add(flow)
+
+            # 若估算失误导致仍超限，做1-2次缩减重写
+            retries = 2
+            while os.path.getsize(out_path) > max_size_bytes and len(final_flows) > 1 and retries > 0:
+                shrink_to = max(1, int(len(final_flows) * 0.85))
+                final_flows = final_flows[-shrink_to:]
+                with open(out_path, 'wb') as wf:
+                    writer = mitm_io.FlowWriter(wf)
+                    for flow in final_flows:
+                        writer.add(flow)
+                retries -= 1
+
+            # 最终保障不超过阈值，若仍超限，返回None
+            if os.path.getsize(out_path) <= max_size_bytes:
+                return out_path
+            return None
+        except Exception as e:
+            logger.warning(f"裁剪mitm文件失败: {e}")
             return None
 
     def run_feature_analysis(self, mitm_file: str) -> Optional[Dict[str, Any]]:
@@ -224,7 +360,8 @@ class IntegratedMainPipeline:
             print(f"   执行命令: {' '.join(cmd)}")
             logger.info(f"执行特征库分析: {' '.join(cmd)}")
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            # 提高超时时间，避免大流量或复杂分析导致的误判失败
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
 
             if result.returncode == 0:
                 # 检查分析结果文件
@@ -266,8 +403,36 @@ class IntegratedMainPipeline:
                 return None
 
         except subprocess.TimeoutExpired:
-            print(f"❌ 特征库分析超时（5分钟）")
+            # 超时兜底：若输出文件已生成且可读，则按成功处理
+            print(f"❌ 特征库分析超时（15分钟）")
             logger.error("特征库分析超时")
+            try:
+                date_str = datetime.now().strftime("%Y%m%d")
+                analysis_file = os.path.join(self.config['output_dir'], f"feature_analysis_{date_str}.json")
+                if os.path.exists(analysis_file) and os.path.getsize(analysis_file) > 0:
+                    with open(analysis_file, 'r', encoding='utf-8') as f:
+                        analysis_data = json.load(f)
+
+                    valuable_apis = analysis_data.get('valuable_apis', 0)
+                    processed_flows = analysis_data.get('processed_flows', 0)
+
+                    print(f"⚠️  使用超时前已生成的分析结果继续流程")
+                    print(f"   - 处理流量: {processed_flows}")
+                    print(f"   - 有价值API: {valuable_apis}")
+                    print(f"   - 分析文件: {analysis_file}")
+
+                    self.pipeline_state['analysis_result'] = {
+                        'success': True,
+                        'analysis_file': analysis_file,
+                        'valuable_apis': valuable_apis,
+                        'processed_flows': processed_flows,
+                        'analysis_data': analysis_data
+                    }
+                    self.pipeline_state['output_files']['analysis'] = analysis_file
+                    self.pipeline_state['steps_completed'].append('analysis')
+                    return self.pipeline_state['analysis_result']
+            except Exception as _:
+                pass
             return None
         except Exception as e:
             print(f"❌ 特征库分析异常: {e}")

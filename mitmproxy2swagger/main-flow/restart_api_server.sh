@@ -197,7 +197,7 @@ check_dependencies() {
 # 启动服务器
 start_server() {
     echo "===================="
-    echo "🚀 启动新的API服务器..."
+    echo "🚀 启动API服务器..."
     echo "💡 按 Ctrl+C 停止服务"
     echo "===================="
 
@@ -327,215 +327,22 @@ show_help() {
     echo "  -b, --bind HOST         指定绑定地址 (默认: 0.0.0.0)"
     echo "  --host-only             仅绑定到本机IP，不监听所有接口"
     echo "  --localhost-only        仅绑定到localhost (127.0.0.1)"
+    echo "  --background            后台运行API服务器"
     echo "  --check-only            仅检查配置，不启动服务器"
     echo "  --args ARGS             传递自定义参数给API服务器"
-    echo "  --web-port PORT         mitmweb Web界面端口 (默认: 8082)"
-    echo "  --proxy-port PORT       mitmweb代理监听端口 (默认: 9999)"
     echo ""
     echo "环境变量:"
     echo "  API_SERVER_PORT         服务器端口"
     echo "  BIND_HOST               绑定地址"
     echo "  CUSTOM_ARGS             自定义启动参数"
-    echo "  MITMWEB_WEB_PORT        mitmweb Web界面端口"
-    echo "  MITMWEB_PROXY_PORT      mitmweb代理监听端口"
     echo ""
     echo "示例:"
-    echo "  $0                      # 启动API服务器和mitmweb (默认端口)"
+    echo "  $0                      # 前台启动API服务器 (默认端口)"
     echo "  $0 -p 8080              # 指定API服务器端口8080"
     echo "  $0 --host-only          # 仅绑定本机IP"
     echo "  $0 --localhost-only     # 仅绑定localhost"
+    echo "  $0 --background         # 后台运行API服务器"
     echo "  $0 --check-only         # 仅检查配置"
-    echo "  $0 --web-port 8083 --proxy-port 8888  # 自定义mitmweb端口"
-}
-
-# 检查mitmweb是否可用
-check_mitmweb() {
-    echo "🔍 检查mitmweb..."
-
-    MITMWEB_PATH=""
-    if command -v mitmweb &> /dev/null; then
-        MITMWEB_PATH="mitmweb"
-    elif [ -f "/Users/gu/Library/Python/3.9/bin/mitmweb" ]; then
-        MITMWEB_PATH="/Users/gu/Library/Python/3.9/bin/mitmweb"
-    elif [ -f "$HOME/.local/bin/mitmweb" ]; then
-        MITMWEB_PATH="$HOME/.local/bin/mitmweb"
-    else
-        echo "❌ 未找到mitmweb命令"
-        echo "💡 请安装mitmproxy: pip3 install mitmproxy"
-        return 1
-    fi
-
-    echo "✅ 找到mitmweb: $MITMWEB_PATH"
-    export MITMWEB_PATH
-    return 0
-}
-
-# 配置OpenSSL支持传统SSL重新协商
-setup_openssl_legacy() {
-    echo "🔧 配置OpenSSL支持传统SSL重新协商..."
-
-    # 设置环境变量
-    export OPENSSL_CONF=""
-    export OPENSSL_ALLOW_UNSAFE_LEGACY_RENEGOTIATION=1
-
-    # 创建临时OpenSSL配置文件
-    TEMP_OPENSSL_CONF="/tmp/openssl_legacy_$$_$(date +%s).conf"
-    cat > "$TEMP_OPENSSL_CONF" << 'EOF'
-openssl_conf = openssl_init
-
-[openssl_init]
-providers = provider_sect
-ssl_conf = ssl_sect
-
-[provider_sect]
-default = default_sect
-legacy = legacy_sect
-
-[default_sect]
-activate = 1
-
-[legacy_sect]
-activate = 1
-
-[ssl_sect]
-system_default = system_default_sect
-
-[system_default_sect]
-Options = UnsafeLegacyRenegotiation
-CipherString = DEFAULT@SECLEVEL=1
-EOF
-
-    export OPENSSL_CONF="$TEMP_OPENSSL_CONF"
-    echo "✅ OpenSSL配置文件已创建: $TEMP_OPENSSL_CONF"
-
-    # 设置清理函数
-    cleanup_openssl() {
-        if [ -f "$TEMP_OPENSSL_CONF" ]; then
-            echo "🧹 清理OpenSSL临时配置文件..."
-            rm -f "$TEMP_OPENSSL_CONF"
-        fi
-    }
-
-    # 注册清理函数
-    trap cleanup_openssl EXIT INT TERM
-}
-
-# 后台启动mitmweb
-start_mitmweb_background() {
-    local web_port="${MITMWEB_WEB_PORT:-8082}"
-    local proxy_port="${MITMWEB_PROXY_PORT:-9999}"
-    local local_ip="${DETECTED_LOCAL_IP:-127.0.0.1}"
-
-    echo "🚀 后台启动mitmweb代理服务器..."
-
-    # 检查mitmweb
-    if ! check_mitmweb; then
-        return 1
-    fi
-
-    # 配置OpenSSL
-    setup_openssl_legacy
-
-    # 检查端口占用
-    if lsof -i :$web_port >/dev/null 2>&1; then
-        echo "⚠️  mitmweb Web端口 $web_port 已被占用"
-        local web_pid=$(lsof -ti :$web_port)
-        echo "📍 占用进程PID: $web_pid"
-        # 停止占用进程
-        pkill -f "mitmweb.*web_port=$web_port" 2>/dev/null || true
-        sleep 2
-    fi
-
-    if lsof -i :$proxy_port >/dev/null 2>&1; then
-        echo "⚠️  mitmweb代理端口 $proxy_port 已被占用"
-        local proxy_pid=$(lsof -ti :$proxy_port)
-        echo "📍 占用进程PID: $proxy_pid"
-        # 停止占用进程
-        pkill -f "mitmweb.*listen_port=$proxy_port" 2>/dev/null || true
-        sleep 2
-    fi
-
-    # 显示mitmweb配置
-    echo "📋 mitmweb配置:"
-    echo "   🌐 Web界面端口: $web_port"
-    echo "   🔗 代理监听端口: $proxy_port"
-    echo "   📍 绑定IP: $local_ip"
-    echo "   🔗 Web界面: http://$local_ip:$web_port"
-    echo "   🔧 代理设置: $local_ip:$proxy_port"
-    echo ""
-
-    # 显示启动命令
-    echo "🚀 启动命令:"
-    echo "OPENSSL_CONF=$OPENSSL_CONF OPENSSL_ALLOW_UNSAFE_LEGACY_RENEGOTIATION=1 \\"
-    echo "$MITMWEB_PATH --set web_port=$web_port --set listen_port=$proxy_port \\"
-    echo "    --set web_open_browser=false --listen-host $local_ip --set web_host=$local_ip \\"
-    echo "    --set ssl_insecure=true"
-    echo ""
-
-    # 后台启动mitmweb (确保环境变量传递)
-    echo "🚀 后台启动mitmweb..."
-    OPENSSL_CONF="$OPENSSL_CONF" \
-    OPENSSL_ALLOW_UNSAFE_LEGACY_RENEGOTIATION=1 \
-    nohup $MITMWEB_PATH \
-        --set web_port=$web_port \
-        --set listen_port=$proxy_port \
-        --set web_open_browser=false \
-        --listen-host $local_ip \
-        --set web_host=$local_ip \
-        --set ssl_insecure=true \
-        > logs/mitmweb_background.log 2>&1 &
-
-    MITMWEB_PID=$!
-    echo "✅ mitmweb已后台启动，PID: $MITMWEB_PID"
-
-    # 保存PID到文件
-    echo $MITMWEB_PID > /tmp/mitmweb.pid
-
-    # 等待mitmweb启动
-    echo "⏳ 等待mitmweb启动..."
-    sleep 5
-
-    # 检查mitmweb是否正常启动
-    if kill -0 $MITMWEB_PID 2>/dev/null; then
-        echo "✅ mitmweb启动成功"
-
-        # 测试Web界面连接
-        if curl -s -f "http://$local_ip:$web_port" > /dev/null 2>&1; then
-            echo "✅ mitmweb Web界面可访问"
-        else
-            echo "⚠️  mitmweb Web界面暂时无法访问，但进程正在运行"
-        fi
-    else
-        echo "❌ mitmweb启动失败"
-        echo "💡 请检查日志: logs/mitmweb_background.log"
-        return 1
-    fi
-
-    # 设置清理函数
-    cleanup_mitmweb() {
-        if [ -f "/tmp/mitmweb.pid" ]; then
-            local pid=$(cat /tmp/mitmweb.pid)
-            if kill -0 $pid 2>/dev/null; then
-                echo "🛑 停止后台mitmweb (PID: $pid)..."
-                kill $pid 2>/dev/null
-                sleep 2
-                if kill -0 $pid 2>/dev/null; then
-                    kill -9 $pid 2>/dev/null
-                fi
-            fi
-            rm -f /tmp/mitmweb.pid
-        fi
-        # 清理OpenSSL配置文件
-        cleanup_openssl 2>/dev/null || true
-    }
-
-    # 注册清理函数
-    trap cleanup_mitmweb EXIT INT TERM
-
-    echo "🏦 银行网站测试:"
-    echo "   工商银行: https://mybank.icbc.com.cn/"
-    echo "   中国银行: https://ebsnew.boc.cn/"
-    echo ""
 }
 
 # 解析命令行参数
@@ -562,20 +369,16 @@ parse_arguments() {
                 BIND_HOST="127.0.0.1"
                 shift
                 ;;
+            --background)
+                BACKGROUND_MODE=true
+                shift
+                ;;
             --check-only)
                 CHECK_ONLY=true
                 shift
                 ;;
             --args)
                 CUSTOM_ARGS="$2"
-                shift 2
-                ;;
-            --web-port)
-                MITMWEB_WEB_PORT="$2"
-                shift 2
-                ;;
-            --proxy-port)
-                MITMWEB_PROXY_PORT="$2"
                 shift 2
                 ;;
             *)
@@ -591,15 +394,15 @@ parse_arguments() {
 show_config_summary() {
     echo "📋 配置摘要"
     echo "===================="
-    echo "🔧 模式: API服务器 + mitmweb"
-    echo "🌐 API绑定地址: ${BIND_HOST:-0.0.0.0}"
-    echo "🔌 API端口号: ${API_SERVER_PORT:-8000}"
-    echo "🌐 mitmweb Web端口: ${MITMWEB_WEB_PORT:-8082}"
-    echo "🔗 mitmweb代理端口: ${MITMWEB_PROXY_PORT:-9999}"
+    if [ "$BACKGROUND_MODE" = true ]; then
+        echo "🔧 模式: API服务器 (后台运行)"
+    else
+        echo "🔧 模式: API服务器 (前台运行)"
+    fi
+    echo "🌐 绑定地址: ${BIND_HOST:-0.0.0.0}"
+    echo "🔌 端口号: ${API_SERVER_PORT:-8000}"
     echo "📍 本机IP: ${DETECTED_LOCAL_IP:-未检测}"
-    echo "🎯 API访问地址: http://${DETECTED_LOCAL_IP:-localhost}:${API_SERVER_PORT:-8000}"
-    echo "🌐 mitmweb Web界面: http://${DETECTED_LOCAL_IP:-localhost}:${MITMWEB_WEB_PORT:-8082}"
-    echo "🔧 代理设置: ${DETECTED_LOCAL_IP:-localhost}:${MITMWEB_PROXY_PORT:-9999}"
+    echo "🎯 访问地址: http://${DETECTED_LOCAL_IP:-localhost}:${API_SERVER_PORT:-8000}"
     echo "📁 工作目录: $(pwd)"
 
     if [ -n "$CUSTOM_ARGS" ]; then
@@ -619,6 +422,7 @@ main() {
 
     # 初始化变量
     CHECK_ONLY=false
+    BACKGROUND_MODE=false
 
     # 检测网络配置 (需要在参数解析前进行，以便--host-only使用)
     check_network_config
@@ -635,9 +439,6 @@ main() {
         exit 0
     fi
 
-    # 启动API服务器和mitmweb
-    echo "🚀 启动模式: API服务器 + mitmweb"
-
     # 执行基础检查
     check_python
     stop_existing_server
@@ -645,16 +446,20 @@ main() {
     setup_directories
     check_dependencies
 
-    # 第1步: 先启动mitmweb (后台运行)
-    echo "📋 第1步: 启动mitmweb (后台运行)"
-    start_mitmweb_background
-
-    # 等待mitmweb启动
-    sleep 3
-
-    # 第2步: 启动API服务器 (前台运行)
-    echo "📋 第2步: 启动API服务器 (前台运行)"
-    start_server
+    # 根据模式启动服务器
+    if [ "$BACKGROUND_MODE" = true ]; then
+        echo "🚀 启动模式: API服务器 (后台运行)"
+        start_api_server_background
+        
+        echo ""
+        echo "✅ API服务器已在后台启动"
+        echo "💡 查看日志: tail -f logs/api_server_background.log"
+        echo "💡 停止服务器: pkill -f independent_api_server.py"
+        echo "💡 检查进程: ps aux | grep independent_api_server"
+    else
+        echo "🚀 启动模式: API服务器 (前台运行)"
+        start_server
+    fi
 }
 
 # 运行主函数

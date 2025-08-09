@@ -2680,9 +2680,70 @@ if (document.readyState === 'loading') {{
         # 🎯 第一步：收集所有值得构建provider的API，并选择最佳版本
         print("🔍 第一步：API去重和最佳版本选择...")
 
+        def _is_resource_url(url: str) -> bool:
+            ul = url.lower()
+            # 明确资源扩展名
+            resource_exts = ('.css', '.js', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.map')
+            if any(ul.endswith(ext) for ext in resource_exts):
+                return True
+            # 常见资源路径段
+            resource_paths = ['/css/', '/js/', '/assets/', '/static/', '/images/', '/img/']
+            if any(p in ul for p in resource_paths):
+                return True
+            return False
+
+        def _looks_like_login(url: str) -> bool:
+            ul = url.lower()
+            login_keywords = ['login', 'logon', 'signin', 'sign-in', 'auth', 'lgn']
+            return any(k in ul for k in login_keywords)
+
         for i, api_data in enumerate(extracted_data, 1):
             api_category = api_data.get('api_category', 'unknown')
             provider_worthy = api_data.get('provider_worthy', False)
+            url = api_data.get('url', '')
+
+            # 额外的URL级过滤（防漏）
+            if _is_resource_url(url):
+                questionable_apis.append({
+                    'api_data': api_data,
+                    'reason': '资源类URL（后缀/路径命中资源特征），在清洗阶段标记并在构建阶段跳过',
+                    'api_category': 'resource',
+                    'confidence_score': 0.0
+                })
+                continue
+
+            # 尝试用已知分类器再判一次类型（结合响应内容）
+            try:
+                flow = self.flow_data_map.get(url)
+                resp_content = ''
+                if flow and flow.get('response_body'):
+                    try:
+                        resp_content = flow['response_body'].decode('utf-8', errors='ignore')
+                    except Exception:
+                        resp_content = ''
+                api_type_guess = self.classify_api_type(url, resp_content)
+            except Exception:
+                api_type_guess = 'unknown'
+
+            if _looks_like_login(url) or api_type_guess == 'authentication' or api_category in ('auth', 'resource'):
+                questionable_apis.append({
+                    'api_data': api_data,
+                    'reason': '非业务类API（登录/资源），在清洗阶段标记并在构建阶段跳过',
+                    'api_category': 'auth' if _looks_like_login(url) or api_type_guess == 'authentication' or api_category == 'auth' else 'resource',
+                    'confidence_score': 0.0
+                })
+                continue
+
+            # 🚫 明确过滤非业务类API：登录类与资源类直接标记并跳过构建
+            if api_category in ('auth', 'resource'):
+                questionable_api = {
+                    'api_data': api_data,
+                    'reason': '非业务类API（登录/资源），在清洗阶段标记并在构建阶段跳过',
+                    'api_category': api_category,
+                    'confidence_score': 0.0
+                }
+                questionable_apis.append(questionable_api)
+                continue
 
             if not provider_worthy:
                 questionable_api = {
@@ -2823,6 +2884,39 @@ if (document.readyState === 'loading') {{
                 pass
             return None
 
+        # 规范化URL：忽略易变参数，用于“相似”判断与去重键
+        def _normalize_url_key(url: str) -> str:
+            try:
+                pr = urlparse(url)
+                qs = parse_qs(pr.query, keep_blank_values=True)
+                volatile_params = {
+                    'dse_sessionId', 'mcp_timestamp', 'dse_pageId', 'sessionId',
+                    'timestamp', '_t', '_ts', 'ts'
+                }
+                kept = []
+                for k, vals in qs.items():
+                    if k.lower() in {p.lower() for p in volatile_params}:
+                        continue
+                    for v in vals:
+                        kept.append((k, v))
+                kept.sort()
+                norm_q = '&'.join([f"{k}={v}" for k, v in kept]) if kept else ''
+                return f"{pr.netloc}{pr.path}?{norm_q}" if norm_q else f"{pr.netloc}{pr.path}"
+            except Exception:
+                return url
+
+        # 统计一个provider所有 responseMatches 的数量，用于选择“更优”版本
+        def _count_response_matches(p: Dict) -> int:
+            try:
+                total = 0
+                rds = p.get('providerConfig', {}).get('providerConfig', {}).get('requestData', []) or []
+                for rd in rds:
+                    rms = rd.get('responseMatches', []) or []
+                    total += len(rms)
+                return total
+            except Exception:
+                return 0
+
         providers_file = os.path.join(output_dir, f"reclaim_providers_{date_str}.json")
         existing_data: Dict[str, Any] = {}
         existing_providers: Dict[str, Dict] = {}
@@ -2836,12 +2930,17 @@ if (document.readyState === 'loading') {{
                 existing_data = {}
                 existing_providers = {}
 
-        # 构建 URL -> providerId 映射（来自已有文件）
-        url_to_provider_id: Dict[str, str] = {}
+        # 构建 规范化URL键 -> providerId 映射（来自已有文件，按“更优条目”占位）
+        key_to_provider_id: Dict[str, str] = {}
+        key_to_best_prov: Dict[str, Dict] = {}
         for pid, prov in existing_providers.items():
             u = _extract_primary_url(prov)
-            if u:
-                url_to_provider_id[u] = pid
+            if not u:
+                continue
+            key = _normalize_url_key(u)
+            if key not in key_to_best_prov or _count_response_matches(prov) > _count_response_matches(key_to_best_prov[key]):
+                key_to_best_prov[key] = prov
+                key_to_provider_id[key] = pid
 
         # 基于 URL 合并：
         merged_providers: Dict[str, Dict] = dict(existing_providers)
@@ -2854,19 +2953,22 @@ if (document.readyState === 'loading') {{
                 print("⚠️  跳过无效provider（缺少providerId或url）")
                 continue
 
-            if new_url in url_to_provider_id:
-                # URL 已存在：复用存量 providerId，其余内容用新内容覆盖
-                exist_pid = url_to_provider_id[new_url]
-                # 强制把新provider的 providerId 改为存量的
+            key = _normalize_url_key(new_url)
+            if key in key_to_provider_id:
+                # 相似（规范化后）URL 已存在：复用存量 providerId，其余内容用新内容覆盖
+                exist_pid = key_to_provider_id[key]
                 try:
                     new_provider['providerConfig']['providerId'] = exist_pid
                 except Exception:
                     pass
                 merged_providers[exist_pid] = new_provider
+                # 更新当前key对应的“最佳”占位
+                key_to_best_prov[key] = new_provider
             else:
-                # 新 URL：直接追加（尾部添加的语义，这里以新增键插入实现）
+                # 新 URL：直接追加
                 merged_providers[new_pid] = new_provider
-                url_to_provider_id[new_url] = new_pid
+                key_to_provider_id[key] = new_pid
+                key_to_best_prov[key] = new_provider
 
         # 清理：移除 responseMatches 为空的存量与新条目
         def _has_nonempty_matches(p: Dict) -> bool:
@@ -2888,44 +2990,9 @@ if (document.readyState === 'loading') {{
         }
 
         # 规范化URL去重：忽略易变参数后合并，仅保留更优的一条（responseMatches更多）
-        def _normalize_url_key(url: str) -> str:
-            try:
-                pr = urlparse(url)
-                qs = parse_qs(pr.query, keep_blank_values=True)
-                drop = {k.lower() for k in ['dse_sessionId', 'mcp_timestamp', 'dse_pageId', 'sessionId', 'timestamp', '_t', '_ts', 'ts']}
-                kept = []
-                for k, vals in qs.items():
-                    if k.lower() in drop:
-                        continue
-                    for v in vals:
-                        kept.append((k, v))
-                kept.sort()
-                norm_q = '&'.join([f"{k}={v}" for k, v in kept]) if kept else ''
-                return f"{pr.netloc}{pr.path}?{norm_q}" if norm_q else f"{pr.netloc}{pr.path}"
-            except Exception:
-                return url
-
-        def _extract_primary_url_from_prov(p: Dict) -> str:
-            try:
-                rds = p.get('providerConfig', {}).get('providerConfig', {}).get('requestData', []) or []
-                return rds[0].get('url', '') if rds else ''
-            except Exception:
-                return ''
-
-        def _count_response_matches(p: Dict) -> int:
-            try:
-                total = 0
-                rds = p.get('providerConfig', {}).get('providerConfig', {}).get('requestData', []) or []
-                for rd in rds:
-                    rms = rd.get('responseMatches', []) or []
-                    total += len(rms)
-                return total
-            except Exception:
-                return 0
-
         deduped: Dict[str, Dict] = {}
         for pid, prov in cleaned_providers.items():
-            url = _extract_primary_url_from_prov(prov)
+            url = _extract_primary_url(prov) or ''
             key = _normalize_url_key(url) if url else pid
             if key not in deduped:
                 deduped[key] = prov
@@ -2933,8 +3000,33 @@ if (document.readyState === 'loading') {{
                 if _count_response_matches(prov) > _count_response_matches(deduped[key]):
                     deduped[key] = prov
 
+        # 最终安全过滤：再次排除登录/资源类provider（多一道保险）
+        def _is_non_business_provider(p: Dict) -> bool:
+            try:
+                meta = p.get('providerConfig', {}).get('providerConfig', {}).get('metadata', {})
+                api_type = str(meta.get('api_type', '')).lower()
+                if api_type in ('authentication', 'login', 'resource'):
+                    return True
+                # URL辅助判断
+                rds = p.get('providerConfig', {}).get('providerConfig', {}).get('requestData', []) or []
+                url0 = (rds[0].get('url') if rds else '') or ''
+                ul = url0.lower()
+                if any(ul.endswith(ext) for ext in ('.css', '.js', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.map')):
+                    return True
+                if any(seg in ul for seg in ['/css/', '/js/', '/assets/', '/static/', '/images/', '/img/']):
+                    return True
+                if any(k in ul for k in ['login', 'logon', 'signin', 'sign-in', 'auth', 'lgn']):
+                    # 如果URL强烈指示登录，且不是明确的业务端点，视为非业务
+                    if not any(k in ul for k in ['overview', 'balance', 'account', 'acc', 'history', 'statement', 'transaction']):
+                        return True
+                return False
+            except Exception:
+                return False
+
+        deduped_business_only: Dict[str, Dict] = {k: v for k, v in deduped.items() if not _is_non_business_provider(v)}
+
         # 重新构建索引
-        providers_indexed = {prov.get('providerConfig', {}).get('providerId', pid): prov for pid, prov in cleaned_providers.items() if prov in deduped.values()}
+        providers_indexed = {prov.get('providerConfig', {}).get('providerId', pid): prov for pid, prov in cleaned_providers.items() if prov in deduped_business_only.values()}
         provider_index: Dict[str, Any] = {}
         for pid, prov in providers_indexed.items():
             prov_cfg = prov.get('providerConfig', {})

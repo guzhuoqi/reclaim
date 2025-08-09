@@ -44,7 +44,37 @@ class SessionBasedMatcher:
         Returns:
             匹配结果字典，如果匹配成功返回匹配信息，否则返回None
         """
-        # 0. 前置清洗：调用 feature-library 过滤低价值/静态资源 API
+        # 0. 优先按 session_id 直连（来自代理绑定）
+        try:
+            sid = flow.metadata.get('session_id') if hasattr(flow, 'metadata') else None
+            if sid:
+                session = self.task_session_db.get_session(str(sid))
+                if session and session.get('providerId'):
+                    provider_id = session['providerId']
+                    task_id = session.get('taskId') or ''
+                    # 构建attestor入参（此时无需再做URL相似度匹配）
+                    match_result = {
+                        'matched_url': flow.request.pretty_url,
+                        'similarity_score': 1.0,
+                        'base_exact_match': True
+                    }
+                    attestor_params = self._build_attestor_params(flow, session, provider_id, match_result)
+                    attestor_response = self._check_attestor_response(task_id) if task_id else None
+                    print(f"🎯 Session直连: session_id={sid}, provider_id={provider_id}, url={flow.request.pretty_url}")
+                    return {
+                        'session': session,
+                        'provider_id': provider_id,
+                        'task_id': task_id,
+                        'match_result': match_result,
+                        'attestor_params': attestor_params,
+                        'attestor_response': attestor_response,
+                        'should_call_attestor': attestor_response is None
+                    }
+        except Exception as _e:
+            # 直连失败时继续走老路径
+            print(f"⚠️ Session直连失败，回退URL匹配: {getattr(_e, 'message', _e)} | url={flow.request.pretty_url}")
+
+        # 1. 前置清洗：调用 feature-library 过滤低价值/静态资源 API
         try:
             url_for_filter = flow.request.pretty_url
             filter_result = self.api_value_filter.filter_and_score_api(url_for_filter, original_score=20)
@@ -56,7 +86,7 @@ class SessionBasedMatcher:
 
         request_url = flow.request.pretty_url
 
-        # 1. 获取所有pending状态的sessions
+        # 2. 获取所有pending状态的sessions
         pending_sessions = self.task_session_db.get_pending_sessions(max_days_back=3)
 
         if not pending_sessions:
@@ -65,7 +95,7 @@ class SessionBasedMatcher:
 
         # 先不打印日志，只有匹配成功时才打印
 
-        # 2. 遍历pending sessions，尝试匹配
+        # 3. 遍历pending sessions，尝试匹配
         for session in pending_sessions:
             session_id = session.get('id')
             provider_id = session.get('providerId')
@@ -75,7 +105,7 @@ class SessionBasedMatcher:
                 print(f"⚠️  Session {session_id} 缺少providerId，跳过")
                 continue
 
-            # 3. 尝试匹配URL（结合provider的method信息）
+            # 4. 尝试匹配URL（结合provider的method信息）
             match_result = self._match_url_with_provider(request_url, flow, provider_id)
 
             if match_result:
@@ -493,16 +523,17 @@ class SessionBasedMatcher:
                         'similarity_details': details
                     }
 
-                # 若仍不满足增强判定，输出一次诊断日志（展示最高分及原因）
-                try:
-                    print("  🔎 URL比对:")
-                    print(f"     请求: {request_url}")
-                    print(f"     配置: {matched_url_diag}")
-                    print(f"     分数: {diag['similarity_score']:.3f} | base_exact={details.get('base_exact_match')} | query_similarity={details.get('query_similarity')}")
-                    if details.get('base_exact_match') and details.get('query_similarity') == 0:
-                        print("     说明: 基础URL完全匹配，query为空 -> 使用公式 0.3 + 0.7*0 = 0.3")
-                except Exception:
-                    pass
+                # 若仍不满足增强判定，只对中高分(>=0.5)输出诊断日志，避免大量低分噪音
+                if diag['similarity_score'] >= 0.5:
+                    try:
+                        print("  🔎 URL比对:")
+                        print(f"     请求: {request_url}")
+                        print(f"     配置: {matched_url_diag}")
+                        print(f"     分数: {diag['similarity_score']:.3f} | base_exact={details.get('base_exact_match')} | query_similarity={details.get('query_similarity')}")
+                        if details.get('base_exact_match') and details.get('query_similarity') == 0:
+                            print("     说明: 基础URL完全匹配，query为空 -> 使用公式 0.3 + 0.7*0 = 0.3")
+                    except Exception:
+                        pass
             return None
 
         matched_url = best['matched_url']

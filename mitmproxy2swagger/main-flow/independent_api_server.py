@@ -34,11 +34,16 @@ from typing import Dict, List, Any, Optional
 from pathlib import Path
 import logging
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Body
 from http import HTTPStatus
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+try:
+    # Pydantic v2
+    from pydantic import RootModel  # type: ignore
+except Exception:  # pragma: no cover
+    RootModel = None  # type: ignore
 import uvicorn
 
 # 导入主流程相关模块
@@ -46,6 +51,7 @@ from integrated_main_pipeline import IntegratedMainPipeline
 from dynamic_config import dynamic_config
 from pathlib import Path
 from collections import OrderedDict
+from urllib.parse import urlparse
 
 # Task Session 数据库
 try:
@@ -279,6 +285,179 @@ def get_local_ip() -> str:
     return "127.0.0.1"
 
 
+############################################
+# 域名 -> 首页链接 配置 持久化与API
+############################################
+
+DOMAIN_HOMEPAGES_FILE = os.path.join("data", "domain_homepages.json")
+
+
+def _load_domain_homepages() -> Dict[str, str]:
+    try:
+        if os.path.exists(DOMAIN_HOMEPAGES_FILE):
+            with open(DOMAIN_HOMEPAGES_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                # 仅保留str->str
+                if isinstance(data, dict):
+                    return {str(k): str(v) for k, v in data.items()}
+        return {}
+    except Exception as e:
+        logger.warning(f"读取域名首页配置失败: {e}")
+        return {}
+
+
+def _save_domain_homepages(mapping: Dict[str, str]) -> None:
+    os.makedirs(os.path.dirname(DOMAIN_HOMEPAGES_FILE), exist_ok=True)
+    with open(DOMAIN_HOMEPAGES_FILE, "w", encoding="utf-8") as f:
+        json.dump(mapping, f, ensure_ascii=False, indent=2)
+
+
+def _extract_login_url_from_provider(provider: Dict[str, Any]) -> Optional[str]:
+    try:
+        if not isinstance(provider, dict):
+            return None
+        # 常见路径优先：provider.providerConfig.providerConfig.loginUrl
+        pc = provider.get("providerConfig")
+        if isinstance(pc, dict):
+            inner = pc.get("providerConfig")
+            if isinstance(inner, dict) and isinstance(inner.get("loginUrl"), str):
+                return inner.get("loginUrl")
+            if isinstance(pc.get("loginUrl"), str):
+                return pc.get("loginUrl")
+        if isinstance(provider.get("loginUrl"), str):
+            return provider.get("loginUrl")
+    except Exception:
+        return None
+    return None
+
+
+def _set_login_url_in_provider(provider: Dict[str, Any], new_url: str) -> bool:
+    try:
+        if not isinstance(provider, dict):
+            return False
+        pc = provider.get("providerConfig")
+        if isinstance(pc, dict):
+            inner = pc.get("providerConfig")
+            if isinstance(inner, dict):
+                inner["loginUrl"] = new_url
+                return True
+            # 退化路径
+            pc["loginUrl"] = new_url
+            return True
+        # 根层兜底
+        provider["loginUrl"] = new_url
+        return True
+    except Exception:
+        return False
+
+
+def _get_homepage_for_url(url: str, mapping: Dict[str, str]) -> Optional[str]:
+    try:
+        if not url or not isinstance(url, str):
+            return None
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return None
+        # 优先精确匹配
+        if host in mapping:
+            return mapping[host]
+        # 子域匹配：host 以 .domain 结尾
+        for domain, homepage in mapping.items():
+            d = (domain or "").lower().strip()
+            if not d:
+                continue
+            if host == d or host.endswith("." + d):
+                return homepage
+        return None
+    except Exception:
+        return None
+
+
+if RootModel:
+    class DomainHomepagePayload(RootModel[Dict[str, str]]):  # type: ignore
+        """Pydantic v2 RootModel: 请求体必须是仅包含一对 key/value 的对象"""
+
+        def get_single_pair(self) -> (str, str):
+            value = self.root  # type: ignore[attr-defined]
+            if not isinstance(value, dict) or len(value) != 1:
+                raise HTTPException(status_code=400, detail="请求体必须只包含一对域名与首页链接")
+            domain, homepage = next(iter(value.items()))
+            if not domain or not isinstance(domain, str):
+                raise HTTPException(status_code=400, detail="无效的域名")
+            if not homepage or not isinstance(homepage, str):
+                raise HTTPException(status_code=400, detail="无效的首页链接")
+            return domain.strip(), homepage.strip()
+else:
+    class DomainHomepagePayload(BaseModel):  # 兼容v1（退化为普通对象）
+        mapping: Dict[str, str]
+
+        def get_single_pair(self) -> (str, str):
+            value = self.mapping
+            if not isinstance(value, dict) or len(value) != 1:
+                raise HTTPException(status_code=400, detail="请求体必须只包含一对域名与首页链接")
+            domain, homepage = next(iter(value.items()))
+            if not domain or not isinstance(domain, str):
+                raise HTTPException(status_code=400, detail="无效的域名")
+            if not homepage or not isinstance(homepage, str):
+                raise HTTPException(status_code=400, detail="无效的首页链接")
+            return domain.strip(), homepage.strip()
+
+
+@app.get("/domain-homepages", response_model=APIResponse)
+async def get_domain_homepages():
+    """获取所有 域名→首页链接 配置"""
+    mapping = _load_domain_homepages()
+    return APIResponse(
+        success=True,
+        message="查询成功",
+        data={"mappings": mapping, "count": len(mapping)}
+    )
+
+
+@app.get("/domain-homepages/{domain}", response_model=APIResponse)
+async def get_domain_homepage(domain: str):
+    mapping = _load_domain_homepages()
+    if domain not in mapping:
+        raise HTTPException(status_code=404, detail="未找到该域名的配置")
+    return APIResponse(success=True, message="查询成功", data={"domain": domain, "homepage": mapping[domain]})
+
+
+@app.post("/domain-homepages", response_model=APIResponse)
+async def upsert_domain_homepage(payload: DomainHomepagePayload):
+    """新增或更新一对域名→首页链接（请求体为单对映射）"""
+    domain, homepage = payload.get_single_pair()
+    mapping = _load_domain_homepages()
+    mapping[domain] = homepage
+    _save_domain_homepages(mapping)
+    return APIResponse(success=True, message="保存成功", data={"domain": domain, "homepage": homepage, "mappings": mapping})
+
+
+@app.delete("/domain-homepages/{domain}", response_model=APIResponse)
+async def delete_domain_homepage(domain: str):
+    mapping = _load_domain_homepages()
+    if domain in mapping:
+        mapping.pop(domain)
+        _save_domain_homepages(mapping)
+        return APIResponse(success=True, message="删除成功", data={"domain": domain, "mappings": mapping})
+    raise HTTPException(status_code=404, detail="未找到该域名的配置")
+
+
+@app.get("/ui/domain-homepages", response_class=HTMLResponse)
+async def ui_domain_homepages():
+    """简单内置页面：加载 main-flow/web_extension.html（含域名配置管理UI）"""
+    try:
+        current_dir = Path(__file__).resolve().parent
+        html_path = current_dir / "web_extension.html"
+        if not html_path.exists():
+            return HTMLResponse("<h3>未找到内置页面</h3>", status_code=404)
+        content = html_path.read_text(encoding="utf-8")
+        return HTMLResponse(content)
+    except Exception as e:
+        logger.error(f"加载内置页面失败: {e}")
+        return HTMLResponse(f"<h3>加载失败: {e}</h3>", status_code=500)
+
+
 async def run_pipeline_async(config: Dict[str, Any], offline_mode: bool = False, input_file: str = None):
     """异步运行主流程"""
     global server_state
@@ -392,9 +571,13 @@ async def root():
             "trigger": "/trigger",
             "upload": "/upload-and-trigger",
             "providers": "/providers",
+            "edit_provider": "/providers/{provider_id}/edit",
             "files": "/files",
             "task_sessions_create": "/task-sessions",
-            "task_session_response": "/task-sessions/{session_id}/response"
+            "task_session_response": "/task-sessions/{session_id}/response",
+            "domain_homepages": "/domain-homepages",
+            "domain_homepage_item": "/domain-homepages/{domain}",
+            "ui_domain_homepages": "/ui/domain-homepages"
         }
     }
 
@@ -587,6 +770,24 @@ class CreateTaskSessionRequest(BaseModel):
     providerId: str = Field(..., description="Provider唯一ID（唯一入参）")
 
 
+class EditProviderRequest(BaseModel):
+    """可编辑的关键字段（均为可选，提供哪个改哪个）"""
+    loginUrl: Optional[str] = Field(default=None, description="登录页URL")
+    institution: Optional[str] = Field(default=None, description="机构名")
+    api_type: Optional[str] = Field(default=None, description="API类型")
+    priority_level: Optional[str] = Field(default=None, description="优先级")
+    value_score: Optional[float] = Field(default=None, description="价值评分")
+    geoLocation: Optional[str] = Field(default=None, description="地理位置参数")
+    injectionType: Optional[str] = Field(default=None, description="注入类型")
+    pageTitle: Optional[str] = Field(default=None, description="页面标题")
+    userAgent_ios: Optional[str] = Field(default=None, description="iOS UA 字符串")
+    userAgent_android: Optional[str] = Field(default=None, description="Android UA 字符串")
+    # 正则编辑：指定 requestData 下标与 responseMatches 下标，替换 value
+    regex_request_index: Optional[int] = Field(default=None, ge=0, description="requestData 下标")
+    regex_match_index: Optional[int] = Field(default=None, ge=0, description="responseMatches 下标")
+    regex_value: Optional[str] = Field(default=None, description="新的正则表达式字符串")
+
+
 def get_task_sessions_dir() -> str:
     """获取 task_sessions 存储目录（与仓库中 mitmproxy_addons/data/task_sessions 对齐）"""
     current_dir = Path(__file__).resolve().parent  # main-flow
@@ -603,6 +804,162 @@ def get_attestor_db_dir() -> str:
     db_dir = project_root / "mitmproxy_addons" / "data" / "attestor_db"
     db_dir.mkdir(parents=True, exist_ok=True)
     return str(db_dir)
+
+
+def _find_latest_providers_file() -> Optional[str]:
+    data_dir = "data"
+    if not os.path.exists(data_dir):
+        return None
+    provider_files = []
+    for file in os.listdir(data_dir):
+        if file.startswith("reclaim_providers_") and file.endswith(".json"):
+            file_path = os.path.join(data_dir, file)
+            provider_files.append((file_path, os.path.getmtime(file_path)))
+    if not provider_files:
+        return None
+    latest_file = max(provider_files, key=lambda x: x[1])[0]
+    return latest_file
+
+
+def _edit_provider_fields(payload: EditProviderRequest, providers_doc: Dict[str, Any], provider_id: str) -> bool:
+    """在 providers_doc 文档中编辑指定 provider 的关键字段
+    返回是否有实际修改
+    """
+    providers_map = providers_doc.get("providers", {})
+    if not isinstance(providers_map, dict):
+        return False
+    target = providers_map.get(provider_id)
+    if not isinstance(target, dict):
+        return False
+
+    # providerIndex 同步
+    provider_index = providers_doc.get("provider_index", {})
+    index_entry = provider_index.get(provider_id) if isinstance(provider_index, dict) else None
+
+    changed = False
+    pc = target.get("providerConfig")
+    if not isinstance(pc, dict):
+        return False
+    inner = pc.get("providerConfig")
+    if not isinstance(inner, dict):
+        return False
+
+    # 1) loginUrl
+    if payload.loginUrl is not None:
+        if inner.get("loginUrl") != payload.loginUrl:
+            inner["loginUrl"] = payload.loginUrl
+            changed = True
+
+    # 2) geoLocation
+    if payload.geoLocation is not None:
+        if inner.get("geoLocation") != payload.geoLocation:
+            inner["geoLocation"] = payload.geoLocation
+            changed = True
+
+    # 3) injectionType
+    if payload.injectionType is not None:
+        if inner.get("injectionType") != payload.injectionType:
+            inner["injectionType"] = payload.injectionType
+            changed = True
+
+    # 3.1) pageTitle
+    if payload.pageTitle is not None:
+        if inner.get("pageTitle") != payload.pageTitle:
+            inner["pageTitle"] = payload.pageTitle
+            changed = True
+
+    # 3.2) userAgent
+    if payload.userAgent_ios is not None or payload.userAgent_android is not None:
+        ua = inner.get("userAgent")
+        if not isinstance(ua, dict):
+            ua = {"ios": None, "android": None}
+        if payload.userAgent_ios is not None and ua.get("ios") != payload.userAgent_ios:
+            ua["ios"] = payload.userAgent_ios
+            changed = True
+        if payload.userAgent_android is not None and ua.get("android") != payload.userAgent_android:
+            ua["android"] = payload.userAgent_android
+            changed = True
+        inner["userAgent"] = ua
+
+    # 4) metadata 同步 + provider_index 同步
+    meta = inner.get("metadata")
+    if not isinstance(meta, dict):
+        meta = {}
+        inner["metadata"] = meta
+
+    def set_meta_field(field: str, value: Any):
+        nonlocal changed
+        if value is not None and meta.get(field) != value:
+            meta[field] = value
+            changed = True
+        if isinstance(index_entry, dict) and value is not None and index_entry.get(field) != value:
+            index_entry[field] = value
+            changed = True
+
+    set_meta_field("institution", payload.institution)
+    set_meta_field("api_type", payload.api_type)
+    set_meta_field("priority_level", payload.priority_level)
+    if payload.value_score is not None:
+        # 数值型
+        set_meta_field("value_score", float(payload.value_score))
+
+    # 5) regex 编辑
+    if (
+        payload.regex_value is not None and
+        payload.regex_request_index is not None and
+        payload.regex_match_index is not None
+    ):
+        try:
+            reqs = inner.get("requestData")
+            if isinstance(reqs, list) and 0 <= payload.regex_request_index < len(reqs):
+                req = reqs[payload.regex_request_index]
+                if isinstance(req, dict):
+                    matches = req.get("responseMatches")
+                    if isinstance(matches, list) and 0 <= payload.regex_match_index < len(matches):
+                        m = matches[payload.regex_match_index]
+                        if isinstance(m, dict):
+                            if m.get("value") != payload.regex_value:
+                                m["value"] = payload.regex_value
+                                changed = True
+        except Exception:
+            # 忽略异常，保持幂等
+            pass
+
+    return changed
+
+
+@app.post("/providers/{provider_id}/edit", response_model=APIResponse)
+async def edit_provider(provider_id: str, payload: EditProviderRequest):
+    """编辑指定 provider 的关键字段，并持久化到最新的 providers JSON 文件中"""
+    latest = _find_latest_providers_file()
+    if not latest or not os.path.exists(latest):
+        raise HTTPException(status_code=404, detail="未找到Provider配置文件")
+
+    try:
+        with open(latest, "r", encoding="utf-8") as f:
+            doc = json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取配置失败: {e}")
+
+    if not _edit_provider_fields(payload, doc, provider_id):
+        return APIResponse(success=True, message="无字段更改或未找到指定Provider", data={"file_path": latest})
+
+    # 备份原文件
+    try:
+        backup_path = latest + ".bak." + datetime.now().strftime("%Y%m%d%H%M%S")
+        shutil.copyfile(latest, backup_path)
+    except Exception:
+        # 备份失败不阻断
+        pass
+
+    # 写回
+    try:
+        with open(latest, "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"写回配置失败: {e}")
+
+    return APIResponse(success=True, message="修改成功", data={"file_path": latest, "provider_id": provider_id})
 
 
 @app.post("/task-sessions", response_model=APIResponse)
@@ -645,7 +1002,8 @@ async def create_task_session(payload: CreateTaskSessionRequest):
 
 @app.get("/task-sessions/{session_id}/response", response_model=APIResponse)
 async def get_response_by_session(session_id: str):
-    """根据 session_id 查询对应的 attestor 响应，只返回 claim 对象；
+    """根据 session_id 查询对应的 attestor 响应，优先返回 claim 对象；
+    若无法获取claim，则返回session的必要信息。
     若 claim 中存在数组且元素为对象，则将对象压缩为单行字符串。
     """
     try:
@@ -656,16 +1014,46 @@ async def get_response_by_session(session_id: str):
             raise HTTPException(status_code=404, detail="未找到对应的session记录")
 
         task_id = session_record.get("taskId") or session_record.get("task_id") or ""
+        
+        # 准备基础返回数据
+        base_response_data = {
+            "session_id": session_id,
+            "status": session_record.get("status", "Unknown"),
+            "taskId": task_id,
+            "created_at": session_record.get("created_at"),
+            "updated_at": session_record.get("updated_at"),
+            "providerId": session_record.get("providerId"),
+        }
+        
+        # 如果没有taskId，返回session基础信息
         if not task_id:
-            raise HTTPException(status_code=400, detail="该session没有有效的taskId，无法索引响应")
+            # 添加attestor_params信息用于调试
+            if "attestor_params" in session_record:
+                base_response_data["attestor_params"] = session_record["attestor_params"]
+            
+            return APIResponse(
+                success=True,
+                message="该session没有taskId，返回session基础信息",
+                data=base_response_data
+            )
 
         # 2) 通过 taskId 从 attestor_db 获取响应
         attestor_db = AttestorDB(base_dir=get_attestor_db_dir())
         response_record = attestor_db.get_response(task_id)
+        
+        # 如果没有找到响应记录，返回session基础信息
         if not response_record:
-            raise HTTPException(status_code=404, detail="未找到对应的响应记录")
+            # 添加attestor_result信息（如果有的话）
+            if "attestor_result" in session_record:
+                base_response_data["attestor_result"] = session_record["attestor_result"]
+            
+            return APIResponse(
+                success=True,
+                message="未找到对应的响应记录，返回session基础信息",
+                data=base_response_data
+            )
 
-        # 3) 只提取 claim 对象
+        # 3) 尝试提取 claim 对象
         data_section = response_record.get("data") if isinstance(response_record, dict) else None
         claim_obj: Optional[Dict[str, Any]] = None
 
@@ -678,8 +1066,14 @@ async def get_response_by_session(session_id: str):
             if claim_obj is None and isinstance(data_section.get("claim"), dict):
                 claim_obj = data_section.get("claim")
 
+        # 如果没有找到claim对象，返回session基础信息和响应信息
         if not isinstance(claim_obj, dict):
-            raise HTTPException(status_code=404, detail="响应中未找到claim对象")
+            base_response_data["response_data"] = response_record
+            return APIResponse(
+                success=True,
+                message="响应中未找到claim对象，返回session和响应基础信息",
+                data=base_response_data
+            )
 
         # 4) 压缩 claim 中数组里的对象为单行字符串
         def compact_array_objects(value: Any) -> Any:
@@ -699,16 +1093,12 @@ async def get_response_by_session(session_id: str):
             return value
 
         compacted_claim = compact_array_objects(claim_obj)
+        base_response_data["claim"] = compacted_claim
 
         return APIResponse(
             success=True,
             message="查询成功",
-            data={
-                "session_id": session_id,
-                "status": session_record.get("status"),
-                "taskId": task_id,
-                "claim": compacted_claim
-            }
+            data=base_response_data
         )
     except HTTPException:
         raise
@@ -832,6 +1222,18 @@ async def get_providers():
 
         # 使用统一排序函数进行倒序排序，最新的放在前面
         sorted_providers = sort_providers_by_time(providers_array, reverse=True)
+
+        # 按域名映射替换 loginUrl（命中则替换为首页链接）
+        domain_mapping = _load_domain_homepages()
+        if isinstance(domain_mapping, dict) and domain_mapping:
+            replaced_count = 0
+            for prov in sorted_providers:
+                current_login = _extract_login_url_from_provider(prov)
+                new_home = _get_homepage_for_url(current_login or "", domain_mapping)
+                if new_home and _set_login_url_in_provider(prov, new_home):
+                    replaced_count += 1
+            if replaced_count:
+                logger.info(f"依据域名映射替换了 {replaced_count} 个 provider 的 loginUrl")
 
         return APIResponse(
             success=True,

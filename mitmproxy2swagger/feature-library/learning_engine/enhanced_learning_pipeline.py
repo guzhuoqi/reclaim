@@ -19,10 +19,16 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
-# 添加路径以导入现有模块
-sys.path.append('mitmproxy2swagger/mitmproxy2swagger')
-sys.path.append('mitmproxy2swagger/feature-library/ai_analysis_features')
-sys.path.append('mitmproxy2swagger/feature-library/learning_engine')
+# 添加路径以导入现有模块（使用基于文件位置的绝对路径，避免工作目录差异）
+from pathlib import Path
+_this_dir = Path(__file__).resolve().parent  # .../mitmproxy2swagger/feature-library/learning_engine
+# 以 mitmproxy2swagger 目录为基准，兼容任意工作目录
+_project_base = _this_dir.parents[1]  # .../mitmproxy2swagger
+sys.path.extend([
+    str(_project_base / 'mitmproxy2swagger'),
+    str(_project_base / 'feature-library' / 'ai_analysis_features'),
+    str(_project_base / 'feature-library' / 'learning_engine')
+])
 
 from financial_api_learner import FinancialAPILearner, APICandidate
 from api_attribute_extractor import APIAttributeExtractor, ExtractedAPIAttributes

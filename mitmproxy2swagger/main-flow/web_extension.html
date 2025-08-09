@@ -145,6 +145,26 @@
             padding: 15px;
             margin-bottom: 10px;
         }
+        .provider-actions { margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
+        .inline-input { padding: 6px 8px; border: 1px solid #ced4da; border-radius: 4px; }
+        .provider-actions { margin-top: 10px; display: flex; gap: 10px; }
+        .inline-input { padding: 6px 8px; border: 1px solid #ced4da; border-radius: 4px; }
+        
+        /* 域名首页配置样式 */
+        .domain-section {
+            margin-top: 30px;
+            background-color: #ffffff;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 16px;
+        }
+        .domain-actions { display: flex; gap: 10px; margin-bottom: 12px; }
+        .domain-form { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+        .domain-form input { padding: 8px 10px; border: 1px solid #ced4da; border-radius: 4px; min-width: 220px; }
+        .domain-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .domain-table th, .domain-table td { border: 1px solid #e9ecef; padding: 8px; }
+        .domain-table th { background: #f8f9fa; text-align: left; }
+        .row-actions { display: flex; gap: 8px; }
         
         .provider-header {
             display: flex;
@@ -259,6 +279,31 @@
                 <p style="color: #666; text-align: center;">暂无Provider配置</p>
             </div>
         </div>
+
+        <div class="domain-section">
+            <h3>域名 → 首页链接 配置</h3>
+            <div class="domain-form">
+                <input id="domainInput" type="text" placeholder="域名，如: example.com" />
+                <input id="homepageInput" type="text" placeholder="首页链接，如: https://example.com" />
+                <button id="addDomainBtn" class="btn btn-success">➕ 新增/更新</button>
+                <button id="reloadDomainBtn" class="btn btn-secondary">🔄 刷新</button>
+            </div>
+            <div class="domain-actions" style="justify-content: space-between;">
+                <div style="color:#666">支持通过接口一次管理一对映射；下方可视化增删改查</div>
+            </div>
+            <table class="domain-table">
+                <thead>
+                    <tr>
+                        <th style="width: 28%">域名</th>
+                        <th>首页链接</th>
+                        <th style="width: 160px">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="domainTableBody">
+                    <tr><td colspan="3" style="color:#666; text-align:center;">暂无配置</td></tr>
+                </tbody>
+            </table>
+        </div>
         
         <div class="log-area">
             <div><strong>操作日志</strong></div>
@@ -272,8 +317,8 @@
     </div>
 
     <script>
-        // API配置
-        const API_BASE = 'http://10.10.10.146:8082/reclaim-provider';
+        // API配置：自动使用当前页面所在服务为基地址
+        const API_BASE = window.location.origin;
         
         // DOM元素
         const triggerBtn = document.getElementById('triggerBtn');
@@ -288,6 +333,12 @@
         const providersContainer = document.getElementById('providersContainer');
         const logContainer = document.getElementById('logContainer');
         const alertArea = document.getElementById('alertArea');
+        // 域名配置元素
+        const domainInput = document.getElementById('domainInput');
+        const homepageInput = document.getElementById('homepageInput');
+        const addDomainBtn = document.getElementById('addDomainBtn');
+        const reloadDomainBtn = document.getElementById('reloadDomainBtn');
+        const domainTableBody = document.getElementById('domainTableBody');
         
         // 状态轮询定时器
         let statusPolling = null;
@@ -299,10 +350,13 @@
             statusBtn.addEventListener('click', checkStatus);
             providersBtn.addEventListener('click', loadProviders);
             resetBtn.addEventListener('click', resetStatus);
+            addDomainBtn.addEventListener('click', upsertDomainHomepage);
+            reloadDomainBtn.addEventListener('click', loadDomainHomepages);
             
             // 初始状态检查
             checkStatus();
             loadProviders();
+            loadDomainHomepages();
             
             addLog('页面加载完成，可以开始使用');
         });
@@ -337,6 +391,97 @@
             } finally {
                 showLoading(false);
             }
+        }
+
+        // ===== 域名→首页 链接配置 =====
+        async function loadDomainHomepages() {
+            try {
+                const resp = await fetch(`${API_BASE}/domain-homepages`);
+                const result = await resp.json();
+                if (result.success) {
+                    renderDomainTable(result.data.mappings || {});
+                    addLog(`🌐 已加载 ${result.data.count || 0} 条域名首页配置`);
+                } else {
+                    showAlert(`加载域名配置失败: ${result.message}`, 'error');
+                }
+            } catch (e) {
+                showAlert(`加载域名配置异常: ${e.message}`, 'error');
+            }
+        }
+
+        function renderDomainTable(mappings) {
+            const entries = Object.entries(mappings);
+            if (entries.length === 0) {
+                domainTableBody.innerHTML = '<tr><td colspan="3" style="color:#666; text-align:center;">暂无配置</td></tr>';
+                return;
+            }
+            domainTableBody.innerHTML = entries.map(([domain, homepage]) => `
+                <tr>
+                    <td>${escapeHtml(domain)}</td>
+                    <td><a href="${escapeAttr(homepage)}" target="_blank" rel="noopener noreferrer">${escapeHtml(homepage)}</a></td>
+                    <td>
+                        <div class="row-actions">
+                            <button class="btn btn-secondary" onclick="prefillDomainForm('${escapeAttr(domain)}','${escapeAttr(homepage)}')">编辑</button>
+                            <button class="btn btn-error" style="background:#dc3545;color:#fff" onclick="deleteDomain('${escapeAttr(domain)}')">删除</button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function prefillDomainForm(domain, homepage) {
+            domainInput.value = domain;
+            homepageInput.value = homepage;
+        }
+
+        async function upsertDomainHomepage() {
+            const domain = domainInput.value.trim();
+            const homepage = homepageInput.value.trim();
+            if (!domain || !homepage) {
+                showAlert('请输入域名与首页链接', 'error');
+                return;
+            }
+            try {
+                const resp = await fetch(`${API_BASE}/domain-homepages`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ [domain]: homepage })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    showAlert('保存成功', 'success');
+                    addLog(`✅ 保存域名映射: ${domain} -> ${homepage}`);
+                    loadDomainHomepages();
+                } else {
+                    showAlert(`保存失败: ${result.message}`, 'error');
+                }
+            } catch (e) {
+                showAlert(`保存异常: ${e.message}`, 'error');
+            }
+        }
+
+        async function deleteDomain(domain) {
+            if (!confirm(`确认删除域名 ${domain} 的配置吗？`)) return;
+            try {
+                const resp = await fetch(`${API_BASE}/domain-homepages/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+                const result = await resp.json();
+                if (result.success) {
+                    showAlert('删除成功', 'success');
+                    addLog(`🗑️ 删除域名映射: ${domain}`);
+                    loadDomainHomepages();
+                } else {
+                    showAlert(`删除失败: ${result.message}`, 'error');
+                }
+            } catch (e) {
+                showAlert(`删除异常: ${e.message}`, 'error');
+            }
+        }
+
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s]));
+        }
+        function escapeAttr(str) {
+            return String(str).replace(/["'\\]/g, s => ({'"':'&quot;', "'":'&#39;', '\\':'\\\\'}[s]));
         }
         
         // 查询状态
@@ -441,30 +586,157 @@
         
         // 显示Providers
         function displayProviders(data) {
-            if (!data.providers || data.providers.length === 0) {
+            if (!data || !data.providers || data.providers.length === 0) {
                 providersContainer.innerHTML = '<p style="color: #666; text-align: center;">暂无Provider配置</p>';
                 return;
             }
             
             let html = '';
-            data.providers.forEach((provider, index) => {
-                const bankInfo = provider.metadata;
+            data.providers.forEach((provider) => {
+                const bankInfo = extractBankInfo(provider);
+                const pid = String(provider?.providerId || provider?.id || provider?.providerConfig?.providerId || '').toString();
+                const pidShort = pid ? `${pid}`.substring(0, 8) + '...' : '-';
+                const bankName = bankInfo?.institution || bankInfo?.bankName || bankInfo?.name || provider?.name || '-';
+                const bankCode = bankInfo?.bankCode || '-';
+                const apiEndpoint = bankInfo?.apiEndpoint || bankInfo?.endpoint || '-';
+                const loginUrl = extractLoginUrl(provider) || '-';
+                const currencies = Array.isArray(bankInfo?.supportedCurrencies) ? bankInfo.supportedCurrencies.join(', ') : '-';
                 html += `
                     <div class="provider-card">
                         <div class="provider-header">
-                            <div class="provider-name">🏦 ${bankInfo.bankName}</div>
-                            <div class="provider-info">ID: ${provider.providerId.substring(0, 8)}...</div>
+                            <div class="provider-name">🏦 ${escapeHtml(bankName)}</div>
+                            <div class="provider-info">ID: ${escapeHtml(pidShort)}</div>
                         </div>
                         <div class="provider-info">
-                            银行代码: ${bankInfo.bankCode} | 
-                            API端点: ${bankInfo.apiEndpoint} | 
-                            支持币种: ${bankInfo.supportedCurrencies.join(', ')}
+                            银行代码: ${escapeHtml(bankCode)} | 
+                            API端点: ${escapeHtml(apiEndpoint)} | 
+                            支持币种: ${escapeHtml(currencies)}
+                        </div>
+                        <div class="provider-info">
+                            登录页: ${loginUrl !== '-' ? `<a href="${escapeAttr(loginUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(loginUrl)}</a>` : '-'}
+                        </div>
+                        <div class="provider-actions">
+                            <input class="inline-input" style="min-width: 320px" type="text" placeholder="loginUrl" value="${escapeAttr(loginUrl)}" id="login-${escapeAttr(pid)}" />
+                            <input class="inline-input" type="text" placeholder="institution" value="${escapeAttr(bankName)}" id="inst-${escapeAttr(pid)}" />
+                            <input class="inline-input" type="text" placeholder="api_type" value="${escapeAttr(bankInfo?.api_type || '')}" id="api-${escapeAttr(pid)}" />
+                            <input class="inline-input" type="text" placeholder="priority_level" value="${escapeAttr(bankInfo?.priority_level || '')}" id="prio-${escapeAttr(pid)}" />
+                            <input class="inline-input" type="number" step="0.1" placeholder="value_score" value="${escapeAttr(String(bankInfo?.value_score ?? ''))}" id="score-${escapeAttr(pid)}" />
+                        </div>
+                        <div class="provider-actions">
+                            <input class="inline-input" type="text" placeholder="geoLocation" value="${escapeAttr(provider?.providerConfig?.providerConfig?.geoLocation || '')}" id="geo-${escapeAttr(pid)}" />
+                            <input class="inline-input" type="text" placeholder="injectionType" value="${escapeAttr(provider?.providerConfig?.providerConfig?.injectionType || '')}" id="inj-${escapeAttr(pid)}" />
+                            <input class="inline-input" style="min-width: 260px" type="text" placeholder="pageTitle" value="${escapeAttr(provider?.providerConfig?.providerConfig?.pageTitle || '')}" id="title-${escapeAttr(pid)}" />
+                        </div>
+                        <div class="provider-actions">
+                            <input class="inline-input" style="min-width: 280px" type="text" placeholder="userAgent_ios" value="${escapeAttr(provider?.providerConfig?.providerConfig?.userAgent?.ios || '')}" id="ua-ios-${escapeAttr(pid)}" />
+                            <input class="inline-input" style="min-width: 280px" type="text" placeholder="userAgent_android" value="${escapeAttr(provider?.providerConfig?.providerConfig?.userAgent?.android || '')}" id="ua-and-${escapeAttr(pid)}" />
+                        </div>
+                        <div class="provider-actions">
+                            <input class="inline-input" type="number" min="0" placeholder="request index" id="rqi-${escapeAttr(pid)}" />
+                            <input class="inline-input" type="number" min="0" placeholder="match index" id="rmi-${escapeAttr(pid)}" />
+                            <input class="inline-input" style="min-width: 380px" type="text" placeholder="regex value" id="rx-${escapeAttr(pid)}" />
+                            <button class="btn btn-secondary" onclick="saveProviderEdits('${escapeAttr(pid)}')">保存</button>
                         </div>
                     </div>
                 `;
             });
             
             providersContainer.innerHTML = html;
+        }
+
+        function extractBankInfo(provider) {
+            // 优先 provider.metadata
+            if (provider && typeof provider === 'object') {
+                if (provider.metadata && typeof provider.metadata === 'object') {
+                    return provider.metadata;
+                }
+                // 兼容 provider.providerConfig.providerConfig.metadata
+                const pc = provider.providerConfig;
+                if (pc && typeof pc === 'object') {
+                    const pc2 = pc.providerConfig;
+                    if (pc2 && typeof pc2 === 'object' && pc2.metadata && typeof pc2.metadata === 'object') {
+                        return pc2.metadata;
+                    }
+                    // 一些结构可能是 provider.providerConfig.metadata
+                    if (pc.metadata && typeof pc.metadata === 'object') {
+                        return pc.metadata;
+                    }
+                }
+            }
+            return {};
+        }
+
+        function extractLoginUrl(provider) {
+            if (!provider || typeof provider !== 'object') return '';
+            // 常见路径：provider.providerConfig.providerConfig.loginUrl
+            const pc = provider.providerConfig;
+            if (pc && typeof pc === 'object') {
+                const pc2 = pc.providerConfig;
+                if (pc2 && typeof pc2 === 'object' && typeof pc2.loginUrl === 'string') {
+                    return pc2.loginUrl;
+                }
+                if (typeof pc.loginUrl === 'string') {
+                    return pc.loginUrl;
+                }
+            }
+            if (typeof provider.loginUrl === 'string') return provider.loginUrl;
+            return '';
+        }
+
+        async function saveProviderEdits(providerId) {
+            const get = id => document.getElementById(id);
+            const payload = {};
+            const loginEl = get(`login-${providerId}`);
+            const instEl = get(`inst-${providerId}`);
+            const apiEl = get(`api-${providerId}`);
+            const prioEl = get(`prio-${providerId}`);
+            const scoreEl = get(`score-${providerId}`);
+            const geoEl = get(`geo-${providerId}`);
+            const injEl = get(`inj-${providerId}`);
+            const titleEl = get(`title-${providerId}`);
+            const uaIosEl = get(`ua-ios-${providerId}`);
+            const uaAndEl = get(`ua-and-${providerId}`);
+            const rqiEl = get(`rqi-${providerId}`);
+            const rmiEl = get(`rmi-${providerId}`);
+            const rxEl = get(`rx-${providerId}`);
+
+            if (loginEl && loginEl.value.trim()) payload.loginUrl = loginEl.value.trim();
+            if (instEl && instEl.value.trim()) payload.institution = instEl.value.trim();
+            if (apiEl && apiEl.value.trim()) payload.api_type = apiEl.value.trim();
+            if (prioEl && prioEl.value.trim()) payload.priority_level = prioEl.value.trim();
+            if (scoreEl && scoreEl.value !== '') payload.value_score = Number(scoreEl.value);
+            if (geoEl && geoEl.value.trim()) payload.geoLocation = geoEl.value.trim();
+            if (injEl && injEl.value.trim()) payload.injectionType = injEl.value.trim();
+            if (titleEl && titleEl.value.trim()) payload.pageTitle = titleEl.value.trim();
+            if (uaIosEl && uaIosEl.value.trim()) payload.userAgent_ios = uaIosEl.value.trim();
+            if (uaAndEl && uaAndEl.value.trim()) payload.userAgent_android = uaAndEl.value.trim();
+            if (rqiEl && rmiEl && rxEl && rqiEl.value !== '' && rmiEl.value !== '' && rxEl.value.trim()) {
+                payload.regex_request_index = Number(rqiEl.value);
+                payload.regex_match_index = Number(rmiEl.value);
+                payload.regex_value = rxEl.value.trim();
+            }
+            if (Object.keys(payload).length === 0) {
+                showAlert('没有需要保存的字段', 'error');
+                return;
+            }
+            try {
+                const resp = await fetch(`${API_BASE}/providers/${encodeURIComponent(providerId)}/edit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    showAlert('保存成功', 'success');
+                    addLog(`✏️ 已保存 provider(${providerId}) 字段: ${Object.keys(payload).join(', ')}`);
+                    // 保存完成后刷新Providers展示
+                    loadProviders();
+                } else {
+                    showAlert(`保存失败: ${result.message}`, 'error');
+                }
+            } catch (e) {
+                showAlert(`保存异常: ${e.message}`, 'error');
+            }
         }
         
         // 显示提示

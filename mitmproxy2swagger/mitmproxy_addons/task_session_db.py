@@ -7,7 +7,7 @@ Task Session 数据库模块
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import threading
@@ -87,6 +87,35 @@ class TaskSessionDB:
         file_path = self._get_session_file_path(date_str)
 
         try:
+            # 在写入前清理：Pending 状态超过10分钟的记录
+            try:
+                sessions = data.get("sessions", {}) or {}
+                if isinstance(sessions, dict) and sessions:
+                    now_utc = datetime.now(timezone.utc)
+                    cutoff = now_utc - timedelta(minutes=10)
+                    to_delete = []
+                    for sid, record in sessions.items():
+                        try:
+                            if record.get("status") == SessionStatus.PENDING.value:
+                                created_at = record.get("created_at")
+                                if created_at:
+                                    created_dt = datetime.fromisoformat(created_at)
+                                    # 若为naive，则视为UTC
+                                    if created_dt.tzinfo is None:
+                                        created_dt = created_dt.replace(tzinfo=timezone.utc)
+                                    if created_dt < cutoff:
+                                        to_delete.append(sid)
+                        except Exception:
+                            # 单条异常不影响整体清理
+                            continue
+                    if to_delete:
+                        for sid in to_delete:
+                            sessions.pop(sid, None)
+                        print(f"🧹 清理过期Pending sessions: {len(to_delete)} (date={date_str})")
+            except Exception as _e:
+                # 清理异常不阻断写入
+                print(f"⚠️ 清理过期Pending sessions时出现异常（已忽略）: {_e}")
+
             # 更新元数据
             data["metadata"]["last_updated"] = datetime.now(timezone.utc).isoformat()
             data["metadata"]["total_sessions"] = len(data.get("sessions", {}))

@@ -25,7 +25,7 @@ from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 import threading
 import queue
 from attestor_db import get_attestor_db
@@ -319,6 +319,13 @@ class AttestorForwardingAddon:
         self.pending_responses: Dict[str, http.HTTPFlow] = {}
         self.metrics: Dict[str, Any] = defaultdict(int)
 
+        # 连接绑定: client_conn.id -> { session_id, bound_at, ttl, peername }
+        self.connection_bindings: Dict[str, Dict[str, Any]] = {}
+        # 绑定域名与路径（最小可落地实现）
+        self.binding_host: str = "bind.reclaim.local"
+        self.binding_path: str = "/bind"
+        self.binding_ttl_seconds: int = 15 * 60
+
         # 初始化session-based匹配器
         self.session_matcher = get_session_matcher()
         print("✅ AttestorForwardingAddon 已集成 SessionBasedMatcher")
@@ -355,6 +362,18 @@ class AttestorForwardingAddon:
                     for task_id in expired_tasks:
                         print(f"🧹 清理过期任务: {task_id}")
                         del self.pending_responses[task_id]
+
+                    # 清理过期的连接绑定
+                    expired_conn_ids: List[str] = []
+                    for conn_id, bind in self.connection_bindings.items():
+                        bound_at = bind.get("bound_at", 0)
+                        ttl = bind.get("ttl", self.binding_ttl_seconds)
+                        if current_time - bound_at > ttl:
+                            expired_conn_ids.append(conn_id)
+                    for conn_id in expired_conn_ids:
+                        info = self.connection_bindings.pop(conn_id, None)
+                        if info:
+                            print(f"🧹 清理过期连接绑定: conn_id={conn_id}, session_id={info.get('session_id')}")
 
                 except Exception as e:
                     print(f"❌ 清理线程异常: {e}")
@@ -470,10 +489,28 @@ class AttestorForwardingAddon:
         # 更新指标
         self.metrics["total_requests"] += 1
 
+        # 先处理绑定请求（最小可落地）
+        if self._maybe_handle_binding_request(flow):
+            # 已处理（返回204或错误提示），不再继续后续逻辑
+            return
+
+        # 如果当前连接已绑定，打印命中日志并附着 session 元数据（优先按session直连）
+        self._maybe_log_binding_hit(flow)
+        self._attach_session_metadata(flow)
+
         # 🎯 第一个功能点：检查pending sessions并尝试匹配
         session_match = self.session_matcher.check_pending_sessions_and_match(flow)
 
         if session_match:
+            # 统一路由日志（有 session 的情况）
+            sid = session_match.get('session', {}).get('id') or flow.metadata.get('session_id')
+            pid = session_match.get('provider_id')
+            route_msg = f"路由选择: Session直连 | session_id={sid} | provider_id={pid} | url={flow.request.pretty_url}"
+            if self.logger:
+                self.logger.info(" 🧭 "+route_msg)
+            else:
+                print("🧭 "+route_msg)
+
             print(f"🎯 Session匹配成功！处理session-based attestor调用")
             self._process_session_based_attestor(flow, session_match)
             return
@@ -489,6 +526,90 @@ class AttestorForwardingAddon:
         if self.logger:
             self.logger.info(f"处理请求: {flow.request.method} {flow.request.pretty_url}")
 
+    def _maybe_handle_binding_request(self, flow: http.HTTPFlow) -> bool:
+        """拦截并处理绑定请求: http://bind.reclaim.local/bind?session_id=xxx
+        成功则返回204且记录连接-会话映射；返回True表示已处理该请求。
+        """
+        try:
+            host = (flow.request.host or "").lower()
+            path = urlparse(flow.request.pretty_url).path
+            if host != self.binding_host or not path.startswith(self.binding_path):
+                return False
+
+            # 解析 session_id
+            qs = parse_qs(urlparse(flow.request.pretty_url).query)
+            session_id = (qs.get("session_id") or [""])[0]
+            if not session_id:
+                msg = {"error": "missing session_id"}
+                flow.response = http.Response.make(400, json.dumps(msg).encode(), {"Content-Type": "application/json"})
+                if self.logger:
+                    self.logger.error(f"绑定失败: 缺少session_id, conn={flow.client_conn.id}")
+                else:
+                    print(f"❌ 绑定失败: 缺少session_id, conn={flow.client_conn.id}")
+                return True
+
+            conn_id = flow.client_conn.id
+            peer = flow.client_conn.peername  # (ip, port)
+            bind_info = {
+                "session_id": session_id,
+                "bound_at": time.time(),
+                "ttl": self.binding_ttl_seconds,
+                "peername": f"{peer[0]}:{peer[1]}" if isinstance(peer, tuple) and len(peer) >= 2 else str(peer),
+            }
+            self.connection_bindings[conn_id] = bind_info
+
+            # 打印详细日志
+            msg_lines = [
+                "连接已绑定:",
+                f"conn_id={conn_id}",
+                f"peer={bind_info['peername']}",
+                f"session_id={session_id}",
+                f"ttl={self.binding_ttl_seconds}s"
+            ]
+            if self.logger:
+                self.logger.info(" 🔗 "+" | ".join(msg_lines))
+            else:
+                print("🔗 "+" | ".join(msg_lines))
+
+            flow.response = http.Response.make(204, b"", {})
+            return True
+        except Exception as e:
+            msg = {"error": f"binding exception: {e}"}
+            flow.response = http.Response.make(500, json.dumps(msg).encode(), {"Content-Type": "application/json"})
+            if self.logger:
+                self.logger.exception(f"绑定处理异常: {e}")
+            else:
+                print(f"❌ 绑定处理异常: {e}")
+            return True
+
+    def _maybe_log_binding_hit(self, flow: http.HTTPFlow) -> None:
+        """如果该请求的连接已绑定，打印命中日志（仅日志，不拦截）。"""
+        try:
+            conn_id = flow.client_conn.id
+            bind = self.connection_bindings.get(conn_id)
+            if not bind:
+                return
+            # 简单打印一次命中日志（可考虑采样/频率限制）
+            msg = f"命中绑定: conn_id={conn_id}, session_id={bind.get('session_id')}, host={flow.request.host}"
+            if self.logger:
+                self.logger.info(" 📎 "+msg)
+            else:
+                print("📎 "+msg)
+        except Exception:
+            pass
+
+    def _attach_session_metadata(self, flow: http.HTTPFlow) -> None:
+        """如该连接已绑定，将 session_id 等写入 flow.metadata，供后续匹配器优先直连使用。"""
+        try:
+            conn_id = flow.client_conn.id
+            bind = self.connection_bindings.get(conn_id)
+            if not bind:
+                return
+            flow.metadata["session_id"] = bind.get("session_id")
+            flow.metadata["client_peer"] = bind.get("peername")
+        except Exception:
+            pass
+
     def _should_process_with_attestor(self, flow: http.HTTPFlow) -> bool:
         """判断是否需要通过attestor处理"""
         attestor_rules = self.config.get("attestor_rules", {})
@@ -498,6 +619,10 @@ class AttestorForwardingAddon:
         host = flow.request.host
         path = urlparse(flow.request.pretty_url).path
         method = flow.request.method
+
+        # 🚫 提前过滤开发环境静态资源，避免无意义的日志输出
+        if self._is_dev_static_resource(host, path):
+            return False
 
         # 调试输出
         print(f"🔍 检查请求: {method} {host}{path}")
@@ -535,6 +660,71 @@ class AttestorForwardingAddon:
         print(f"⚪ 跳过请求: {method} {host}{path}")
         return False
 
+    def _is_dev_static_resource(self, host: str, path: str) -> bool:
+        """判断是否为开发环境静态资源或非业务请求，避免无意义的处理和日志输出"""
+        # 开发服务器特征（端口范围 3000-9999，localhost/127.0.0.1/10.x.x.x）
+        is_dev_host = (
+            'localhost' in host.lower() or
+            host.startswith('127.0.0.1') or
+            host.startswith('10.') or
+            host.startswith('192.168.') or
+            any(f':{port}' in host for port in range(3000, 10000))
+        )
+        
+        # 静态资源文件扩展名
+        static_extensions = {
+            '.js', '.ts', '.jsx', '.tsx',           # JavaScript/TypeScript
+            '.css', '.scss', '.sass', '.less',      # 样式文件
+            '.html', '.htm',                        # HTML
+            '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp',  # 图片
+            '.woff', '.woff2', '.ttf', '.eot',      # 字体
+            '.map',                                 # Source map
+            '.json', '.xml',                        # 数据文件
+            '.txt', '.md'                           # 文档
+        }
+        
+        # 静态资源路径特征
+        static_paths = {
+            '/src/', '/assets/', '/static/', '/public/',
+            '/js/', '/css/', '/img/', '/images/', '/fonts/',
+            '/node_modules/', '/dist/', '/build/'
+        }
+        
+        # 开发环境API路径特征（通常不是金融业务API）
+        dev_api_paths = {
+            '/home', '/api/task-sessions/', '/api/debug/', '/api/health/',
+            '/api/status/', '/api/metrics/', '/api/logs/', '/health',
+            '/status', '/ping', '/version', '/favicon.ico'
+        }
+        
+        path_lower = path.lower()
+        
+        # 1. 开发环境：过滤静态资源和开发API
+        if is_dev_host:
+            # 检查文件扩展名
+            if any(path_lower.endswith(ext) for ext in static_extensions):
+                return True
+                
+            # 检查静态资源路径特征
+            if any(segment in path_lower for segment in static_paths):
+                return True
+                
+            # 检查开发环境API路径
+            if any(path_lower.startswith(dev_path) or dev_path in path_lower for dev_path in dev_api_paths):
+                return True
+        
+        # 2. 生产环境：只过滤明确的静态资源
+        else:
+            # 检查静态资源文件扩展名
+            if any(path_lower.endswith(ext) for ext in static_extensions):
+                return True
+                
+            # 检查静态资源路径特征
+            if any(segment in path_lower for segment in static_paths):
+                return True
+            
+        return False
+
     def _match_domains(self, host: str, domains: List[str]) -> bool:
         """匹配域名"""
         for domain in domains:
@@ -570,6 +760,14 @@ class AttestorForwardingAddon:
     def _process_with_attestor(self, flow: http.HTTPFlow):
         """通过attestor处理请求"""
         try:
+            # 统一路由日志（无 session 或未命中 session 的情况）
+            sid = flow.metadata.get('session_id') if hasattr(flow, 'metadata') else None
+            base_route_msg = f"路由选择: 规则匹配 | {'有session' if sid else '无session'}{(f'({sid})' if sid else '')} | url={flow.request.pretty_url}"
+            if self.logger:
+                self.logger.info(" 🧭 "+base_route_msg)
+            else:
+                print("🧭 "+base_route_msg)
+
             # 找到匹配的规则
             rule = self._find_matching_rule(flow)
             if not rule:
