@@ -724,6 +724,12 @@ class ReclaimProviderBuilder:
             except Exception as _e:
                 print(f"⚠️ 质量过滤异常（跳过）：{_e}")
             
+            # HSBC 定制化：对 hsbc.com.hk + /api/mmf- 端点，缩减为“最小稳定集”，其余有则加，无则不加
+            try:
+                response_matches = self._refine_response_matches_for_hsbc(url, response_content, response_matches)
+            except Exception as _e:
+                print(f"⚠️ HSBC 精简规则失败（忽略）：{_e}")
+
             # 最终校验：仅保留当前响应确实命中的规则，满足 AND 语义
             try:
                 verified_matches = self._verify_response_matches_attestor_and_logic(response_matches, response_content)
@@ -771,6 +777,12 @@ class ReclaimProviderBuilder:
 
             # 文本场景下，不再注入通用 regex 到 responseMatches，避免硬编码误杀
 
+        # HSBC 定制化（fallback 分支）
+        try:
+            response_matches = self._refine_response_matches_for_hsbc(url, response_content, response_matches)
+        except Exception as _e:
+            print(f"⚠️ HSBC 精简规则失败（忽略）：{_e}")
+
         # 最终 AND 复核（fallback 分支）：仅保留当前应答上真实命中的规则
         try:
             verified_matches = self._verify_response_matches_attestor_and_logic(response_matches, response_content)
@@ -781,6 +793,60 @@ class ReclaimProviderBuilder:
             print(f"⚠️ AND校验(回退)异常（跳过）：{_e}")
 
         return response_matches, response_redactions
+
+    def _refine_response_matches_for_hsbc(self, url: str, body: str, response_matches: List[Dict]) -> List[Dict]:
+        """对 hsbc.com.hk + /api/mmf- 端点进行“最小稳定集”精简：
+        - 仅保留稳定字段用于 AND 校验（命中才加入）
+        - 账户类端点（accounts/domestic）：若确实存在，再追加 accountNumber、accountType|accountStatus
+        其他银行/端点不变。
+        """
+        try:
+            from urllib.parse import urlparse
+            import re
+            pr = urlparse(url)
+            host = (pr.netloc or '').lower()
+            path = (pr.path or '')
+        except Exception:
+            return response_matches
+
+        if 'hsbc.com.hk' not in host or '/api/mmf-' not in path:
+            return response_matches
+
+        body = body or ''
+        refined: List[Dict] = []
+
+        def add_contains(val: str):
+            refined.append({ 'type': 'contains', 'value': val, 'invert': False })
+
+        def add_regex(pattern: str):
+            refined.append({ 'type': 'regex', 'value': pattern, 'invert': False })
+
+        # 最小稳定集：currency（contains） + currencyCode 正则 + amount/value 正则（命中才加）
+        try:
+            if 'currency' in body:
+                add_contains('"currency"')
+            if re.search(r'"(?:currency|currencyCode)"\s*:\s*"[A-Z]{3}"', body, re.S):
+                add_regex(r'"(?:currency|currencyCode)"\s*:\s*"(?P<currency>[A-Z]{3})"')
+            if re.search(r'"(?:amount|value|availableBalance)"\s*:\s*[0-9.]+', body, re.S):
+                add_regex(r'"(?:amount|value|availableBalance)"\s*:\s*(?P<amount>[0-9.]+)')
+        except Exception:
+            pass
+
+        # accounts/domestic 下再择机追加（命中才加），避免 AND 失败
+        if 'accounts/domestic' in path:
+            try:
+                if '"accountNumber"' in body:
+                    add_contains('"accountNumber"')
+                if re.search(r'"(?:accountType|accountStatus)"\s*:\s*"[^"]+"', body, re.S):
+                    add_regex(r'"(?:accountType|accountStatus)"\s*:\s*"(?P<account_type>[^"]+)"')
+                # 主流货币集命中再追加
+                if re.search(r'"(?:HKD|USD|CNY|EUR|GBP|JPY|AUD|CAD|SGD)"', body, re.S):
+                    add_regex(r'"(?P<major_currency>HKD|USD|CNY|EUR|GBP|JPY|AUD|CAD|SGD)"')
+            except Exception:
+                pass
+
+        # 若最小集为空，则回退原有（避免清空导致 schema 不满足）
+        return refined if len(refined) > 0 else response_matches
 
     def _verify_response_matches_attestor_and_logic(self, response_matches: List[Dict], response_content: str) -> List[Dict]:
         """校验 responseMatches 的 AND 语义：仅返回在当前响应上全部能命中的规则。
