@@ -8,7 +8,7 @@ import json
 import time
 import time
 from typing import Dict, List, Optional, Any, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, unquote
 import importlib.util
 from pathlib import Path
 from mitmproxy import http
@@ -84,7 +84,21 @@ class SessionBasedMatcher:
             # 过滤异常时，不阻塞后续流程
             pass
 
-        request_url = flow.request.pretty_url
+        # 1.1 扩展静态/非业务请求过滤（基于 Accept 与 Sec-Fetch-Dest）
+        try:
+            accept = (flow.request.headers.get('Accept') or flow.request.headers.get('accept') or '').lower()
+            sec_fetch_dest = (flow.request.headers.get('Sec-Fetch-Dest') or flow.request.headers.get('sec-fetch-dest') or '').lower()
+            if any([
+                accept.startswith('image/'),
+                accept.startswith('text/css'),
+                sec_fetch_dest in {'image', 'style', 'script', 'font', 'media'}
+            ]):
+                return None
+        except Exception:
+            pass
+
+        # 解包代理封装URL（如 fourier.alibaba.com/ts?url=...）
+        request_url = self._unwrap_proxy_url(flow.request.pretty_url)
 
         # 2. 获取所有pending状态的sessions
         pending_sessions = self.task_session_db.get_pending_sessions(max_days_back=3)
@@ -127,6 +141,14 @@ class SessionBasedMatcher:
                 # 6. 检查attestor_db中是否已有响应
                 attestor_response = self._check_attestor_response(task_id)
 
+                # 仅当存在鉴权信息时才允许调用 attestor
+                has_auth = False
+                try:
+                    sp = attestor_params.get('secretParams') or {}
+                    has_auth = bool(sp.get('cookieStr') or sp.get('authorisationHeader') or sp.get('headers'))
+                except Exception:
+                    has_auth = False
+
                 return {
                     'session': session,
                     'provider_id': provider_id,
@@ -134,7 +156,7 @@ class SessionBasedMatcher:
                     'match_result': match_result,
                     'attestor_params': attestor_params,
                     'attestor_response': attestor_response,
-                    'should_call_attestor': attestor_response is None
+                    'should_call_attestor': (attestor_response is None) and has_auth
                 }
 
         # 没有匹配时不打印日志，避免噪音
@@ -183,26 +205,37 @@ class SessionBasedMatcher:
         request_headers_dict = dict(flow.request.headers)
         basic_headers, sensitive_headers = self._split_headers(request_headers_dict)
 
+        # 使用解包后的真实URL，避免将外层代理URL写入params
+        canonical_url = self._unwrap_proxy_url(flow.request.pretty_url)
         params = {
-            'url': flow.request.pretty_url,  # 使用实际请求的URL
+            'url': canonical_url,
             'method': flow.request.method,
             'geoLocation': 'HK',
             'headers': basic_headers,  # 普通请求头放入 params.headers
             'body': '',
-            'responseMatches': self._convert_response_matches_format(matched_request_data.get('responseMatches', [])),
+            'responseMatches': self._convert_response_matches_format(
+                matched_request_data.get('responseMatches', []),
+                safe_mode=(not bool(match_result.get('base_exact_match')))
+            ),
             'responseRedactions': self._convert_redactions_format(matched_request_data.get('responseRedactions', []))
         }
 
-        # 构建secretParams - 按照attestor-core的期望格式，不包含headers字段
+        # 构建secretParams - 按照attestor-core的期望格式
         secret_params = {}
 
-        # 特殊处理Cookie和Authorization
+        # 特殊处理Cookie和Authorization，其余敏感头归入 secretParams.headers
+        other_secret_headers = {}
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
             if key_lower == 'cookie':
                 secret_params['cookieStr'] = value
             elif key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
+            else:
+                other_secret_headers[key] = value
+
+        if other_secret_headers:
+            secret_params['headers'] = other_secret_headers
 
         # 构建attestor_params的正确结构 - 🎯 添加必要的顶层字段
         attestor_params = {
@@ -254,7 +287,7 @@ class SessionBasedMatcher:
         print(f"   普通Headers: {len(params['headers'])}")
         print(f"   SecretParams: {list(attestor_params['secretParams'].keys())}")
         print(f"   Body长度: {len(params['body'])}")
-        print(f"   ResponseMatches数量: {len(params['responseMatches'])}")
+        print(f"   ResponseMatches数量: {len(params['responseMatches'])} (safe_mode={'Y' if (not bool(match_result.get('base_exact_match'))) else 'N'})")
         print(f"   ResponseRedactions数量: {len(params['responseRedactions'])}")
 
         # 🔍 详细记录responseRedactions，用于分析extractedParameters问题
@@ -303,31 +336,75 @@ class SessionBasedMatcher:
 
         return converted
 
-    def _convert_response_matches_format(self, response_matches: List[Dict]) -> List[Dict]:
+    def _convert_response_matches_format(self, response_matches: List[Dict], safe_mode: bool = False) -> List[Dict]:
         """
         转换responseMatches格式，移除不兼容的字段
 
         Args:
             response_matches: 原始responseMatches列表
+            safe_mode: 安全模式（当URL基础不完全匹配时，降噪，仅保留通用规则）
 
         Returns:
             List[Dict]: 转换后的responseMatches列表
         """
-        converted = []
-        for match in response_matches:
-            # 只保留attestor-core支持的字段
-            converted_match = {
-                'type': match.get('type', 'regex'),
-                'value': match.get('value', '')
-            }
+        # 不做“填充”，严格按 provider 的配置返回；safe_mode 仅作为保留参数，不影响输出
 
-            # 如果有invert字段，保留它
+        def _is_generic_rule(value: str, rtype: str) -> bool:
+            v_lower = (value or '').lower()
+            if rtype == 'contains':
+                return any(k in v_lower for k in ['currency', 'amount', 'balance'])
+            # regex：简单启发式，包含币种/金额关键词或典型模式片段
+            generic_fragments = [
+                '"currency"', '"currencycode"', 'amount', 'value',
+                '[a-z]{3}', '(?:hkd|usd|cny|eur|gbp|jpy|aud|cad|sgd)'
+            ]
+            return any(frag in v_lower for frag in generic_fragments)
+
+        def _is_too_specific(value: str) -> bool:
+            v_lower = (value or '').lower()
+            specific_keys = [
+                'accounttype', 'accountstatus', '"account"', '"acc', 'account_', 'acct', 'cardno', 'id_no'
+            ]
+            return any(k in v_lower for k in specific_keys)
+
+        converted: List[Dict] = []
+        for match in (response_matches or []):
+            rtype = match.get('type', 'regex')
+            value = match.get('value', '')
+            if not value:
+                continue
+
+            if safe_mode:
+                # 只保留通用型，剔除过于具体的字段规则
+                if not _is_generic_rule(value, rtype):
+                    continue
+                if _is_too_specific(value):
+                    continue
+
+            converted_match = {
+                'type': rtype,
+                'value': value
+            }
             if 'invert' in match:
                 converted_match['invert'] = match['invert']
-
             converted.append(converted_match)
 
         return converted
+
+    def _unwrap_proxy_url(self, url: str) -> str:
+        """解包代理封装URL（例如 fourier.alibaba.com/ts?url=...）。不满足条件则原样返回。"""
+        try:
+            u = urlparse(url)
+            host = (u.netloc or '').lower()
+            path = (u.path or '')
+            if 'fourier.alibaba.com' in host and path.startswith('/ts'):
+                qs = parse_qs(u.query or '')
+                target = (qs.get('url') or [''])[0]
+                if target:
+                    return unquote(target)
+        except Exception:
+            pass
+        return url
 
     def _save_attestor_params_to_session(self, session_id: str, attestor_params: Dict) -> None:
         """
@@ -516,6 +593,14 @@ class SessionBasedMatcher:
                         print(f"     分数: {score:.3f} | base_exact=True | method匹配 | {reason} -> 提升为高分")
                     except Exception:
                         pass
+                    # 仅当存在鉴权信息时才允许调用 attestor
+                    has_auth = False
+                    try:
+                        sp = attestor_params.get('secretParams') or {}
+                        has_auth = bool(sp.get('cookieStr') or sp.get('authorisationHeader') or sp.get('headers'))
+                    except Exception:
+                        has_auth = False
+
                     return {
                         'matched_url': matched_url_diag,
                         'similarity_score': score,
@@ -763,18 +848,31 @@ class SessionBasedMatcher:
         Returns:
             (basic_headers, sensitive_headers) 元组
         """
-        # 敏感headers，需要放到secretParams中
-        sensitive_header_names = {
-            'cookie', 'authorization', 'x-auth-token', 'x-api-key',
-            'x-session-token', 'x-csrf-token', 'x-nonce'
+        # 敏感headers识别（部分匹配 + 精确名）
+        sensitive_exact_headers = {
+            'cookie', 'authorization'
         }
+        sensitive_name_keywords = [
+            # 用户指定的常见供应商专有头/变体
+            'x-bridge-token', 'x-access-token', 'x-session-id', 'x-csrf-token', 'x-xsrf-token', 'x-authorization', 'x-api-key',
+            # 通用关键词（部分匹配）
+            'token', 'auth', 'session', 'csrf', 'xsrf', 'api-key', 'bridge', 'credential', 'nonce'
+        ]
 
         basic_headers = {}
         sensitive_headers = {}
 
+        def _is_sensitive_header(name: str, value: str) -> bool:
+            nl = (name or '').lower()
+            if nl in sensitive_exact_headers:
+                return True
+            for kw in sensitive_name_keywords:
+                if kw in nl:
+                    return True
+            return False
+
         for key, value in headers.items():
-            key_lower = key.lower()
-            if key_lower in sensitive_header_names:
+            if _is_sensitive_header(key, value):
                 sensitive_headers[key] = value
             else:
                 basic_headers[key] = value

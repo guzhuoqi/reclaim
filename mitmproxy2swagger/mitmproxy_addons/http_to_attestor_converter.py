@@ -41,10 +41,16 @@ class HttpToAttestorConverter:
             }
         }
 
-        # 敏感headers，需要放到secretParams中
-        self.sensitive_headers = {
-            'cookie', 'authorization', 'x-auth-token', 'x-api-key'
-        }
+        # 敏感headers识别规则（名称部分匹配 + 精确名），需要放到secretParams中
+        # - 精确名：保留最关键的两个，单独映射到 cookieStr / authorisationHeader
+        # - 关键词：采用“部分匹配”（contains），覆盖更多供应商私有头
+        self.sensitive_exact_headers = {'cookie', 'authorization'}
+        self.sensitive_name_keywords = [
+            # 用户指明的关键变体
+            'x-bridge-token', 'x-access-token', 'x-session-id', 'x-csrf-token', 'x-xsrf-token', 'x-authorization', 'x-api-key',
+            # 通用关键词（部分匹配）
+            'token', 'auth', 'session', 'csrf', 'xsrf', 'api-key', 'bridge', 'credential'
+        ]
 
         # 基础headers，保留在params中
         self.basic_headers = {
@@ -101,16 +107,22 @@ class HttpToAttestorConverter:
         if response_redactions:
             params["responseRedactions"] = response_redactions
 
-        # 构建secretParams - 按照attestor-core的期望格式，不包含headers字段
-        secret_params = {}
+        # 构建secretParams - 按照attestor-core的期望格式
+        secret_params: Dict[str, Any] = {}
 
-        # 特殊处理Cookie和Authorization
+        # 特殊处理Cookie和Authorization；其余敏感头统一放到 secretParams.headers
+        secret_headers: Dict[str, str] = {}
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
             if key_lower == 'cookie':
                 secret_params['cookieStr'] = value
             elif key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
+            else:
+                secret_headers[key] = value
+
+        if secret_headers:
+            secret_params['headers'] = secret_headers
 
         # 构建最终结果
         result = {
@@ -131,12 +143,22 @@ class HttpToAttestorConverter:
         Returns:
             (basic_headers, sensitive_headers) 元组
         """
-        basic_headers = {}
-        sensitive_headers = {}
+        basic_headers: Dict[str, str] = {}
+        sensitive_headers: Dict[str, str] = {}
+
+        def _is_sensitive_header(name: str, value: str) -> bool:
+            nl = (name or '').lower()
+            # 精确命中
+            if nl in self.sensitive_exact_headers:
+                return True
+            # 名称关键词部分匹配
+            for kw in self.sensitive_name_keywords:
+                if kw in nl:
+                    return True
+            return False
 
         for key, value in headers.items():
-            key_lower = key.lower()
-            if key_lower in self.sensitive_headers:
+            if _is_sensitive_header(key, value):
                 sensitive_headers[key] = value
             else:
                 basic_headers[key] = value
@@ -245,16 +267,21 @@ class HttpToAttestorConverter:
         if response_redactions:
             params["responseRedactions"] = response_redactions
 
-        # 构建secretParams - 按照attestor-core的期望格式，不包含headers字段
-        secret_params = {}
+        # 构建secretParams - 按照attestor-core的期望格式
+        secret_params: Dict[str, Any] = {}
 
-        # 特殊处理Cookie和Authorization
+        secret_headers: Dict[str, str] = {}
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
             if key_lower == 'cookie':
                 secret_params['cookieStr'] = value
             elif key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
+            else:
+                secret_headers[key] = value
+
+        if secret_headers:
+            secret_params['headers'] = secret_headers
 
         # 构建最终结果
         result = {

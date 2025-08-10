@@ -223,7 +223,7 @@ class ReclaimProviderBuilder:
                     # 字段匹配 - 生成字段验证和提取规则
                     field_name = pattern.replace("field:", "")
 
-                    # 先做命中预校验：仅当响应正文包含该字段名才加入 contains
+                    # 先做命中预校验：仅当响应正文包含该字段名才加入 contains（严格 AND 保障）
                     if f'"{field_name}"' in response_content:
                         response_matches.append({
                             "value": f'"{field_name}"',
@@ -233,17 +233,6 @@ class ReclaimProviderBuilder:
                             "order": order_counter,
                             "isOptional": False
                         })
-                    else:
-                        # 对未命中的字段，降级为可选，或直接跳过（HTML 场景多为未命中）
-                        if not self._is_html_response(matched_patterns):
-                            response_matches.append({
-                                "value": f'"{field_name}"',
-                                "type": "contains",
-                                "invert": False,
-                                "description": f"验证{field_name}字段存在（可选）",
-                                "order": order_counter,
-                                "isOptional": True
-                            })
 
                     # 🎯 根据响应类型决定是否使用jsonPath
                     json_path = "" if self._is_html_response(matched_patterns) else f"$.{field_name}"
@@ -735,6 +724,15 @@ class ReclaimProviderBuilder:
             except Exception as _e:
                 print(f"⚠️ 质量过滤异常（跳过）：{_e}")
             
+            # 最终校验：仅保留当前响应确实命中的规则，满足 AND 语义
+            try:
+                verified_matches = self._verify_response_matches_attestor_and_logic(response_matches, response_content)
+                if len(verified_matches) != len(response_matches):
+                    print(f"✅ AND校验后保留 {len(verified_matches)}/{len(response_matches)} 条匹配规则")
+                response_matches = verified_matches
+            except Exception as _e:
+                print(f"⚠️ AND校验异常（跳过）：{_e}")
+
             # 若过滤后无有效规则，可选择不强塞通用 contains，避免误导
             return response_matches, response_redactions
 
@@ -748,40 +746,21 @@ class ReclaimProviderBuilder:
             financial_patterns = self.analyze_json_financial_patterns(response_json)
 
             for pattern in financial_patterns:
-                # 构建responseMatches
+                # 不再向 responseMatches 注入通用/启发式规则，仅在确认提取需要时构建 redactions
                 if pattern['type'] == 'amount':
-                    response_matches.append({
-                        "value": f'"{pattern["field"]}":{pattern["pattern"]}',
-                        "type": "contains",
-                        "invert": False,
-                        "description": f"匹配{pattern['description']}",
-                        "order": None,
-                        "isOptional": False
-                    })
-
-                    # 构建responseRedactions
                     response_redactions.append({
                         "xPath": "",
                         "jsonPath": pattern['json_path'],
-                        "regex": f'"{pattern["field"]}":(?P<field_value>.*)',  # 🎯 添加命名捕获组
+                        "regex": f'"{pattern["field"]}":(?P<field_value>.*)',
                         "hash": "",
                         "order": None
                     })
 
                 elif pattern['type'] == 'account':
-                    response_matches.append({
-                        "value": f'"{pattern["field"]}":"{pattern["pattern"]}"',
-                        "type": "contains",
-                        "invert": False,
-                        "description": f"匹配{pattern['description']}",
-                        "order": None,
-                        "isOptional": False
-                    })
-
                     response_redactions.append({
                         "xPath": "",
                         "jsonPath": pattern['json_path'],
-                        "regex": f'"{pattern["field"]}":"(?P<field_value>.*)"',  # 🎯 添加命名捕获组
+                        "regex": f'"{pattern["field"]}":"(?P<field_value>.*)"',
                         "hash": "",
                         "order": None
                     })
@@ -790,17 +769,68 @@ class ReclaimProviderBuilder:
             # 非JSON响应，使用文本模式分析
             text_patterns = self.analyze_text_financial_patterns(response_content)
 
-            for pattern in text_patterns:
-                response_matches.append({
-                    "value": pattern['regex'],
-                    "type": "regex",
-                    "invert": False,
-                    "description": pattern['description'],
-                    "order": None,
-                    "isOptional": False
-                })
+            # 文本场景下，不再注入通用 regex 到 responseMatches，避免硬编码误杀
+
+        # 最终 AND 复核（fallback 分支）：仅保留当前应答上真实命中的规则
+        try:
+            verified_matches = self._verify_response_matches_attestor_and_logic(response_matches, response_content)
+            if len(verified_matches) != len(response_matches):
+                print(f"✅ AND校验(回退)后保留 {len(verified_matches)}/{len(response_matches)} 条匹配规则")
+            response_matches = verified_matches
+        except Exception as _e:
+            print(f"⚠️ AND校验(回退)异常（跳过）：{_e}")
 
         return response_matches, response_redactions
+
+    def _verify_response_matches_attestor_and_logic(self, response_matches: List[Dict], response_content: str) -> List[Dict]:
+        """校验 responseMatches 的 AND 语义：仅返回在当前响应上全部能命中的规则。
+
+        - contains: 作为子串检查，支持大小写敏感的精确包含（与 attestor 行为一致）
+        - regex: 使用 Python 的 re 模块进行匹配（DOTALL），若表达式无效则丢弃该条
+        - invert: 反转匹配结果
+
+        Args:
+            response_matches: 候选匹配规则
+            response_content: 本次样本响应内容
+
+        Returns:
+            通过验证的匹配规则列表（保证每一条都命中当前响应，从而 AND 可通过）
+        """
+        import re
+
+        verified: List[Dict] = []
+        body = response_content or ""
+
+        for m in response_matches or []:
+            t = (m.get('type') or 'regex').strip()
+            v = m.get('value') or ''
+            inv = bool(m.get('invert', False))
+
+            if not v:
+                # 空规则直接跳过
+                continue
+
+            matched = False
+            try:
+                if t == 'contains':
+                    matched = (v in body)
+                elif t == 'regex':
+                    # 使用 DOTALL 以适配跨行匹配，尽量贴近 attestor 的字符串视图
+                    matched = re.search(v, body, re.DOTALL) is not None
+                else:
+                    # 未知类型，跳过
+                    continue
+            except re.error:
+                # 非法正则，跳过
+                matched = False
+
+            # 处理 invert 语义
+            matched = (not matched) if inv else matched
+
+            if matched:
+                verified.append(m)
+
+        return verified
 
     def analyze_json_financial_patterns(self, json_data: Any, path: str = "$") -> List[Dict]:
         """分析JSON数据中的金融模式"""
@@ -3012,16 +3042,31 @@ if (document.readyState === 'loading') {{
             pid: prov for pid, prov in merged_providers.items() if _has_nonempty_matches(prov)
         }
 
-        # 规范化URL去重：忽略易变参数后合并，仅保留更优的一条（responseMatches更多）
+        # 规范化URL去重（严格版）：仅当 host+path 完全一致，method 与 requestHash 一致时才允许覆盖；否则并存
+        def _extract_host_path_method_hash(p: Dict) -> Tuple[str, str, str, str]:
+            try:
+                rds = p.get('providerConfig', {}).get('providerConfig', {}).get('requestData', []) or []
+                rd0 = rds[0] if rds else {}
+                url = rd0.get('url', '')
+                pr = urlparse(url)
+                method = (rd0.get('method') or '').upper()
+                rhash = rd0.get('requestHash') or ''
+                return pr.netloc.lower(), pr.path, method, rhash
+            except Exception:
+                return '', '', '', ''
+
         deduped: Dict[str, Dict] = {}
         for pid, prov in cleaned_providers.items():
-            url = _extract_primary_url(prov) or ''
-            key = _normalize_url_key(url) if url else pid
+            host, path, method, rhash = _extract_host_path_method_hash(prov)
+            key = f"{host}{path}"
             if key not in deduped:
                 deduped[key] = prov
             else:
-                if _count_response_matches(prov) > _count_response_matches(deduped[key]):
-                    deduped[key] = prov
+                # 仅当 method 与 requestHash 都一致时才允许“择优覆盖”，否则并存（避免跨端点错并）
+                oh, op, om, orh = _extract_host_path_method_hash(deduped[key])
+                if om == method and orh == rhash:
+                    if _count_response_matches(prov) > _count_response_matches(deduped[key]):
+                        deduped[key] = prov
 
         # 最终安全过滤：再次排除登录/资源类provider（多一道保险）
         def _is_non_business_provider(p: Dict) -> bool:
