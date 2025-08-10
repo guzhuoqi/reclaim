@@ -10,7 +10,9 @@
     "zkme_express_port": 3000,
     "max_workers": 3,
     "request_timeout": 180,
-    "private_key": "0x0123788edad59d7c013cdc85e4372f350f828e2cec62d9a2de4560e69aec7f89"
+    "private_key": "0x0123788edad59d7c013cdc85e4372f350f828e2cec62d9a2de4560e69aec7f89",
+    "use_zkme_express": false,
+    "zkme_base_url": "http://localhost:3000"
   },
   "attestor_rules": {
     "enabled": true,

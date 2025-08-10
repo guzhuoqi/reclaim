@@ -136,9 +136,11 @@ echo "================================="
 # 启动Chrome
 "$CHROME_PATH" \
     --proxy-server="$PROXY_URL" \
+    --host-resolver-rules="MAP bind.reclaim.local 127.0.0.1,MAP *.reclaim.local 127.0.0.1" \
     --ignore-certificate-errors \
     --ignore-certificate-errors-spki-list \
     --ignore-ssl-errors \
+    --disable-quic \
     --disable-web-security \
     --allow-running-insecure-content \
     --disable-features=VizDisplayCompositor \

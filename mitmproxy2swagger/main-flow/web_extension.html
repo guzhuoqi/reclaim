@@ -600,6 +600,7 @@
                 const bankCode = bankInfo?.bankCode || '-';
                 const apiEndpoint = bankInfo?.apiEndpoint || bankInfo?.endpoint || '-';
                 const loginUrl = extractLoginUrl(provider) || '-';
+                const innerUrl = extractInnerUrl(provider) || '-';
                 const currencies = Array.isArray(bankInfo?.supportedCurrencies) ? bankInfo.supportedCurrencies.join(', ') : '-';
                 html += `
                     <div class="provider-card">
@@ -613,7 +614,17 @@
                             支持币种: ${escapeHtml(currencies)}
                         </div>
                         <div class="provider-info">
+                            请求URL: ${innerUrl !== '-' ? `<a href="${escapeAttr(innerUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(innerUrl)}</a>` : '-'}
+                        </div>
+                        <div class="provider-info">
                             登录页: ${loginUrl !== '-' ? `<a href="${escapeAttr(loginUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(loginUrl)}</a>` : '-'}
+                        </div>
+                        <div class="provider-info">
+                            Provider ID: <span style="font-family: 'Courier New', monospace;">${escapeHtml(pid)}</span>
+                        </div>
+                        <div class="provider-actions">
+                            <button class="btn btn-success" onclick="createTaskSession('${escapeAttr(pid)}')">生成Session</button>
+                            <span id="session-status-${escapeAttr(pid)}" style="font-size:12px;color:#666"></span>
                         </div>
                         <div class="provider-actions">
                             <input class="inline-input" style="min-width: 320px" type="text" placeholder="loginUrl" value="${escapeAttr(loginUrl)}" id="login-${escapeAttr(pid)}" />
@@ -683,6 +694,20 @@
             return '';
         }
 
+        function extractInnerUrl(provider) {
+            // 期望路径：provider.providerConfig.providerConfig.requestData[0].url
+            try {
+                const pc = provider?.providerConfig;
+                const pc2 = pc?.providerConfig;
+                const rd = (pc2?.requestData) || (pc?.requestData) || provider?.requestData;
+                if (Array.isArray(rd) && rd.length > 0) {
+                    const first = rd.find(item => item && typeof item.url === 'string') || rd[0];
+                    if (first && typeof first.url === 'string') return first.url;
+                }
+            } catch (_) {}
+            return '';
+        }
+
         async function saveProviderEdits(providerId) {
             const get = id => document.getElementById(id);
             const payload = {};
@@ -736,6 +761,28 @@
                 }
             } catch (e) {
                 showAlert(`保存异常: ${e.message}`, 'error');
+            }
+        }
+
+        async function createTaskSession(providerId) {
+            try {
+                const resp = await fetch(`${API_BASE}/task-sessions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ providerId })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    const sessionId = (result?.data?.session_id) || (result?.data?.session?.id) || '-';
+                    showAlert('Session创建成功', 'success');
+                    addLog(`🆕 为 provider(${providerId}) 创建 session: ${sessionId}`);
+                    const el = document.getElementById(`session-status-${providerId}`);
+                    if (el) el.textContent = `sessionId: ${sessionId}`;
+                } else {
+                    showAlert(`创建失败: ${result.message}`, 'error');
+                }
+            } catch (e) {
+                showAlert(`创建异常: ${e.message}`, 'error');
             }
         }
         

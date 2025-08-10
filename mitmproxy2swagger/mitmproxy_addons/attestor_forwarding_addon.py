@@ -52,10 +52,13 @@ except ImportError:
 class AttestorExecutor:
     """Attestor API执行器"""
 
-    def __init__(self, api_host: str = "localhost", api_port: int = 3000, max_workers: int = 3):
+    def __init__(self, api_host: str = "localhost", api_port: int = 3000, max_workers: int = 3, 
+                 use_zkme_express: bool = False, zkme_base_url: str = "https://test-exp.bitkinetic.com"):
         self.api_host = api_host
         self.api_port = api_port
         self.max_workers = max_workers
+        self.use_zkme_express = use_zkme_express
+        self.zkme_base_url = zkme_base_url
         self.executor_queue = queue.Queue(maxsize=max_workers)
         self.active_tasks = {}
         self.task_counter = 0
@@ -63,6 +66,23 @@ class AttestorExecutor:
         # 初始化数据库
         self.db = get_attestor_db()
         print(f"📊 Attestor 数据库已初始化: {self.db.base_dir}")
+        
+        # 初始化zkme-express客户端（如果需要）
+        if self.use_zkme_express:
+            try:
+                # 尝试相对导入
+                from .zkme_express_client import ZkmeExpressClient
+            except ImportError:
+                # 如果相对导入失败，尝试绝对导入
+                import sys
+                import os
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                if current_dir not in sys.path:
+                    sys.path.insert(0, current_dir)
+                from zkme_express_client import ZkmeExpressClient
+            
+            self.zkme_client = ZkmeExpressClient(self.zkme_base_url)
+            print(f"🌐 启用zkme-express模式: {self.zkme_base_url}")
 
         # 初始化工作线程
         for i in range(max_workers):
@@ -86,7 +106,7 @@ class AttestorExecutor:
                 self.executor_queue.task_done()
 
     def _execute_task(self, task: Dict[str, Any]):
-        """执行attestor任务 - 通过子进程直接调用 Node.js"""
+        """执行attestor任务 - 支持zkme-express API或本地Node.js"""
         task_id = task["task_id"]
         attestor_params = task["attestor_params"]
         callback = task["callback"]
@@ -99,6 +119,41 @@ class AttestorExecutor:
             "attestor_params": attestor_params
         }
         self.db.save_request(task_id, request_data)
+
+        # 根据配置选择执行方式
+        if self.use_zkme_express:
+            self._execute_via_zkme_express(task_id, attestor_params, callback)
+        else:
+            self._execute_via_local_script(task_id, attestor_params, callback)
+
+    def _execute_via_zkme_express(self, task_id: str, attestor_params: Dict[str, Any], callback):
+        """通过zkme-express API执行"""
+        try:
+            print(f"🚀 开始执行Attestor任务 {task_id} (通过zkme-express API)...")
+            
+            # 使用asyncio运行异步方法
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            try:
+                result = loop.run_until_complete(
+                    self.zkme_client.execute_attestor_task(task_id, attestor_params)
+                )
+                callback(result)
+            finally:
+                loop.close()
+                
+        except Exception as e:
+            print(f"❌ zkme-express执行失败: {e}")
+            callback({
+                "success": False,
+                "error": str(e),
+                "task_id": task_id
+            })
+
+    def _execute_via_local_script(self, task_id: str, attestor_params: Dict[str, Any], callback):
+        """通过本地Node.js脚本执行（原有逻辑）"""
 
         try:
             start_time = time.time()
@@ -458,10 +513,19 @@ class AttestorForwardingAddon:
         max_workers = self.config.get("global_settings", {}).get("max_workers", 3)
         api_host = self.config.get("global_settings", {}).get("zkme_express_host", "localhost")
         api_port = self.config.get("global_settings", {}).get("zkme_express_port", 3000)
+        use_zkme_express = self.config.get("global_settings", {}).get("use_zkme_express", False)
+        zkme_base_url = self.config.get("global_settings", {}).get("zkme_base_url", "https://test-exp.bitkinetic.com")
 
         try:
-            self.executor = AttestorExecutor(api_host, api_port, max_workers)
-            print(f"✅ Attestor执行器初始化完成: {api_host}:{api_port}")
+            self.executor = AttestorExecutor(
+                api_host=api_host, 
+                api_port=api_port, 
+                max_workers=max_workers,
+                use_zkme_express=use_zkme_express,
+                zkme_base_url=zkme_base_url
+            )
+            mode = "zkme-express" if use_zkme_express else "local-script"
+            print(f"✅ Attestor执行器初始化完成: {mode} 模式")
         except Exception as e:
             print(f"❌ Attestor执行器初始化失败: {e}")
 

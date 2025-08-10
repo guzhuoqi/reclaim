@@ -16,6 +16,7 @@ Reclaim Provider Builder
 """
 
 import os
+import shutil
 import sys
 import json
 import re
@@ -2873,6 +2874,28 @@ if (document.readyState === 'loading') {{
 
         # 使用日期作为文件名后缀（支持同日追加合并）
         date_str = datetime.now().strftime("%Y%m%d")
+        # 目标文件（今天）
+        providers_file_today = os.path.join(output_dir, f"reclaim_providers_{date_str}.json")
+
+        # 若今天文件不存在，尝试拷贝上一日作为基线
+        if not os.path.exists(providers_file_today):
+            try:
+                prev_date = None
+                prev_file_path = None
+                for fname in os.listdir(output_dir):
+                    if not (fname.startswith("reclaim_providers_") and fname.endswith(".json")):
+                        continue
+                    date_part = fname.replace("reclaim_providers_", "").replace(".json", "")
+                    if len(date_part) == 8 and date_part.isdigit() and date_part < date_str:
+                        if prev_date is None or date_part > prev_date:
+                            prev_date = date_part
+                            prev_file_path = os.path.join(output_dir, fname)
+
+                if prev_file_path and os.path.exists(prev_file_path):
+                    shutil.copyfile(prev_file_path, providers_file_today)
+                    print(f"📄 已从上一日 {prev_date} 拷贝 providers 文件为今日基线: {providers_file_today}")
+            except Exception as e:
+                print(f"⚠️ 拷贝上一日 providers 文件失败（忽略并继续）：{e}")
 
         # 🎯 读取已有文件，基于 URL 进行“追加合并”
         def _extract_primary_url(p: Dict) -> Optional[str]:
@@ -2917,7 +2940,7 @@ if (document.readyState === 'loading') {{
             except Exception:
                 return 0
 
-        providers_file = os.path.join(output_dir, f"reclaim_providers_{date_str}.json")
+        providers_file = providers_file_today
         existing_data: Dict[str, Any] = {}
         existing_providers: Dict[str, Dict] = {}
         if os.path.exists(providers_file):
