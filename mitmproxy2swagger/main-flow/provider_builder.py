@@ -730,6 +730,12 @@ class ReclaimProviderBuilder:
             except Exception as _e:
                 print(f"⚠️ HSBC 精简规则失败（忽略）：{_e}")
 
+            # 账户号规则增强（命中才加入，避免 AND 风险）
+            try:
+                response_matches = self._augment_account_number_rules(url, response_content, response_matches)
+            except Exception as _e:
+                print(f"⚠️ 账户号规则增强失败（忽略）：{_e}")
+
             # 最终校验：仅保留当前响应确实命中的规则，满足 AND 语义
             try:
                 verified_matches = self._verify_response_matches_attestor_and_logic(response_matches, response_content)
@@ -782,6 +788,12 @@ class ReclaimProviderBuilder:
             response_matches = self._refine_response_matches_for_hsbc(url, response_content, response_matches)
         except Exception as _e:
             print(f"⚠️ HSBC 精简规则失败（忽略）：{_e}")
+
+        # 账户号规则增强（fallback 分支）
+        try:
+            response_matches = self._augment_account_number_rules(url, response_content, response_matches)
+        except Exception as _e:
+            print(f"⚠️ 账户号规则增强失败（忽略）：{_e}")
 
         # 最终 AND 复核（fallback 分支）：仅保留当前应答上真实命中的规则
         try:
@@ -847,6 +859,78 @@ class ReclaimProviderBuilder:
 
         # 若最小集为空，则回退原有（避免清空导致 schema 不满足）
         return refined if len(refined) > 0 else response_matches
+
+    def _augment_account_number_rules(self, url: str, body: str, response_matches: List[Dict]) -> List[Dict]:
+        """增强账户号识别规则（低风险）：
+        - 仅当正文中检测到“未掩码账号”候选时，才加入 AND 规则
+        - JSON：键名同义词严格匹配 -> 仅数字与分隔符
+        - HTML/TEXT：邻近关键词 + 数字序列（允许空格/短横，但不允许 * X 掩码）
+        - 适用：BOC HK / CMB WL 优先；其他域若命中也可受益
+        """
+        import re
+        from urllib.parse import urlparse
+
+        body = body or ''
+        pr = urlparse(url)
+        host = (pr.netloc or '').lower()
+        path = (pr.path or '')
+
+        # 候选域（优先启用）
+        preferred_hosts = (
+            'its.bochk.com', 'bochk.com',
+            'www.cmbwinglungbank.com', 'cmbwinglungbank.com'
+        )
+
+        # JSON 键名同义词
+        json_keys = r'(?:accountNumber|accNo|acctNo|accountId|displayAccountNumber)'
+        json_regex = rf'"{json_keys}"\s*:\s*"(?P<account_number>\d(?:[ -]?\d){{7,19}})"'
+
+        # HTML/TEXT：关键词邻域 + 账号
+        # 关键词（中英）
+        kw = r'(?:账户|帳號|賬號|Account(?:\s*No)?|Acct(?:\s*No)?)'
+        # 账号主体：仅数字及可选分隔符（空格/短横）；不允许 * x X • 等掩码字符
+        acct_core = r'(?P<account_number>\d(?:[ -]?\d){7,19})'
+        html_regex = rf'{kw}[^\n\r\d]{{0,32}}{acct_core}'
+
+        def already_has_account_rule(rms: List[Dict]) -> bool:
+            for m in rms or []:
+                val = (m.get('value') or '')
+                if 'account_number' in val or 'accountNumber' in val or 'accNo' in val:
+                    return True
+            return False
+
+        # 快速检测：是否包含未掩码账号候选
+        has_candidate = False
+        # 1) JSON 风格
+        if re.search(json_regex, body, re.S):
+            has_candidate = True
+        # 2) HTML/文本风格（关键词邻域）
+        if re.search(html_regex, body, re.S | re.I):
+            has_candidate = True
+
+        if not has_candidate or already_has_account_rule(response_matches):
+            return response_matches
+
+        # 仅当来自优先域或检测命中时加入，避免对整个系统带来误报
+        if any(h in host for h in preferred_hosts) or has_candidate:
+            # JSON 规则（命名分组，用于提取）
+            if re.search(json_regex, body, re.S):
+                response_matches.append({
+                    'type': 'regex',
+                    'value': json_regex,
+                    'invert': False,
+                    'description': '提取账户号（JSON键名同义词）'
+                })
+            # HTML/文本规则（带关键词的稳健版本）
+            if re.search(html_regex, body, re.S | re.I):
+                response_matches.append({
+                    'type': 'regex',
+                    'value': html_regex,
+                    'invert': False,
+                    'description': '提取账户号（关键词邻域+未掩码）'
+                })
+
+        return response_matches
 
     def _verify_response_matches_attestor_and_logic(self, response_matches: List[Dict], response_content: str) -> List[Dict]:
         """校验 responseMatches 的 AND 语义：仅返回在当前响应上全部能命中的规则。
