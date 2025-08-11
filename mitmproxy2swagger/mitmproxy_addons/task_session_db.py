@@ -272,6 +272,66 @@ class TaskSessionDB:
 
         return pending_sessions
 
+    def get_latest_pending_session_by_provider(self, provider_id: str, max_days_back: int = 7) -> Optional[Dict[str, Any]]:
+        """获取指定 provider 的最新 Pending session
+
+        Args:
+            provider_id: Provider ID
+            max_days_back: 向前搜索的天数范围（包含当天）
+
+        Returns:
+            最新的 Pending session 记录，若不存在返回 None
+        """
+        if not provider_id:
+            return None
+
+        latest_record: Optional[Dict[str, Any]] = None
+        latest_ts: float = float('-inf')
+
+        def _parse_iso_to_ts(dt_val: Any) -> float:
+            try:
+                if dt_val is None:
+                    return float('-inf')
+                # 支持数值型时间戳
+                if isinstance(dt_val, (int, float)):
+                    return float(dt_val)
+                dt_str = str(dt_val)
+                # 兼容Z结尾
+                dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+                if dt.tzinfo is None:
+                    # 视为UTC
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.timestamp()
+            except Exception:
+                return float('-inf')
+
+        # 遍历最近几天的分片文件（与 get_pending_sessions 一致的策略）
+        for days_back in range(max_days_back + 1):
+            timestamp = time.time() - (days_back * 24 * 60 * 60)
+            date_str = self._get_date_str(timestamp)
+
+            data = self._load_sessions_for_date(date_str)
+            for _sid, session_record in (data.get("sessions", {}) or {}).items():
+                try:
+                    if session_record.get("status") != SessionStatus.PENDING.value:
+                        continue
+                    if str(session_record.get("providerId")) != str(provider_id):
+                        continue
+
+                    # 以 created_at 优先，退化到 updated_at
+                    ts = _parse_iso_to_ts(session_record.get("created_at"))
+                    if ts == float('-inf'):
+                        ts = _parse_iso_to_ts(session_record.get("updated_at"))
+
+                    if ts > latest_ts:
+                        latest_ts = ts
+                        latest_record = session_record
+                except Exception:
+                    # 单条异常不影响整体
+                    continue
+
+        return latest_record
+
     def list_sessions_by_date(self, date_str: str) -> List[Dict[str, Any]]:
         """
         列出指定日期的所有session

@@ -969,6 +969,42 @@ async def create_task_session(payload: CreateTaskSessionRequest):
         base_dir = get_task_sessions_dir()
         db = TaskSessionDB(base_dir=base_dir)
 
+        # 在创建前，先检查同一 providerId 是否已存在 Pending 状态的 session
+        try:
+            latest_record = db.get_latest_pending_session_by_provider(payload.providerId, max_days_back=7)
+            if latest_record:
+                # 判断是否超过10分钟
+                def _to_ts(val: Any) -> float:
+                    try:
+                        if isinstance(val, (int, float)):
+                            return float(val)
+                        dt = datetime.fromisoformat(str(val).replace('Z', '+00:00'))
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        return dt.timestamp()
+                    except Exception:
+                        return 0.0
+
+                created_ts = _to_ts(latest_record.get("created_at") or latest_record.get("updated_at"))
+                is_fresh = (time.time() - created_ts) <= 600  # 10分钟
+
+                if is_fresh:
+                    existing_session_id = latest_record.get("id")
+                    return APIResponse(
+                        success=True,
+                        message="已存在Pending状态的session，返回最新记录",
+                        data={
+                            "session": latest_record,
+                            "session_id": existing_session_id,
+                            "base_dir": base_dir,
+                            "reused": True
+                        }
+                    )
+                # 否则继续创建新session；写入时DB会清理同日超过10分钟的Pending
+        except Exception:
+            # 预检失败不阻断创建流程
+            pass
+
         session_id = db.create_session(
             task_id="",
             provider_id=payload.providerId,

@@ -1,4 +1,5 @@
-FROM node:20-bookworm
+ARG NODE_IMAGE=node:20-bookworm
+FROM ${NODE_IMAGE}
 
 # Install Python and pip for mitmproxy and addon deps
 RUN apt-get update -y && \
@@ -7,13 +8,32 @@ RUN apt-get update -y && \
 
 WORKDIR /opt/reclaim
 
-# Copy and build attestor-core (for local script execution inside addon)
+# Build-time toggles for attestor-core handling
+ARG SKIP_ATTESTOR_BUILD=false
+ARG USE_PREBUILT_LIB=true
+ARG NPM_CI_ARGS=--omit=dev
+
+# Copy and (optionally) build attestor-core (for local script execution inside addon)
 COPY ./attestor-core/package.json ./attestor-core/package-lock.json /opt/reclaim/attestor-core/
 RUN mkdir -p /opt/reclaim/attestor-core/src/scripts \
     && sh -lc 'echo "" > /opt/reclaim/attestor-core/src/scripts/prepare.sh' \
-    && cd /opt/reclaim/attestor-core && npm ci
+    && if [ "$SKIP_ATTESTOR_BUILD" != "true" ]; then \
+         cd /opt/reclaim/attestor-core && npm ci $NPM_CI_ARGS ; \
+       else \
+         echo "⏭️  Skip npm ci for attestor-core (will rely on runtime volume)" ; \
+       fi
 COPY ./attestor-core /opt/reclaim/attestor-core
-RUN cd /opt/reclaim/attestor-core && npm run build && npm prune --omit=dev
+RUN if [ "$SKIP_ATTESTOR_BUILD" != "true" ]; then \
+      cd /opt/reclaim/attestor-core && \
+      if [ "$USE_PREBUILT_LIB" = "true" ] && [ -d lib ] ; then \
+        echo "⚡ Using prebuilt attestor-core lib (skip build)" ; \
+      else \
+        echo "🔧 Building attestor-core from source" && npm run build ; \
+      fi && \
+      npm prune --omit=dev ; \
+    else \
+      echo "⏭️  Skip attestor-core build (will rely on runtime volume)" ; \
+    fi
 
 # Create compatibility symlink for code paths expecting /opt/attestor-core
 RUN ln -s /opt/reclaim/attestor-core /opt/attestor-core

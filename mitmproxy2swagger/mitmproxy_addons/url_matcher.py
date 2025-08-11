@@ -192,13 +192,17 @@ class URLMatcher:
 
         # 5. 综合评分 - 🎯 修复：降低基础URL权重，提高查询参数权重
         if base_exact_match:
-            # 如果基础URL完全匹配，仍需要重视查询参数的相似度
-            # 对于API URL，查询参数往往比基础URL更重要
-            composite_score = 0.3 + (query_similarity * 0.7)
+            # 如果基础URL完全匹配，则直接认为高度相似；
+            # 若存在查询参数，则在高基线分上再叠加查询相似度权重
+            base_line = 0.9 if (not comp1['query'] and not comp2['query']) else 0.6
+            composite_score = max(base_line, 0.3 + (query_similarity * 0.7))
         else:
             # 否则使用加权平均
             composite_score = (base_similarity * self.base_url_weight +
                              query_similarity * self.params_weight)
+
+        # 命中判断：允许基础URL完全相等时直接命中
+        is_match_flag = (composite_score >= self.similarity_threshold) or base_exact_match
 
         return {
             'base_similarity': base_similarity,
@@ -206,7 +210,7 @@ class URLMatcher:
             'full_similarity': full_similarity,
             'base_exact_match': base_exact_match,
             'composite_score': composite_score,
-            'is_match': composite_score >= self.similarity_threshold,
+            'is_match': is_match_flag,
             'details': {
                 'base_similarity_seq': base_similarity_seq,
                 'base_similarity_jaccard': base_similarity_jaccard,

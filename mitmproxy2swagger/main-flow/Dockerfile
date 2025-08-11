@@ -1,4 +1,5 @@
-FROM python:3.12-slim-bookworm
+ARG PY_BASE_IMAGE=python:3.12-slim-bookworm
+FROM ${PY_BASE_IMAGE}
 
 WORKDIR /app/main-flow
 

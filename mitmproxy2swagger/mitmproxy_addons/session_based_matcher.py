@@ -100,67 +100,72 @@ class SessionBasedMatcher:
         # 解包代理封装URL（如 fourier.alibaba.com/ts?url=...）
         request_url = self._unwrap_proxy_url(flow.request.pretty_url)
 
-        # 2. 获取所有pending状态的sessions
-        pending_sessions = self.task_session_db.get_pending_sessions(max_days_back=3)
+        # 2. 基于 URL 先定位 provider 候选（阈值同 URLMatcher 配置）
+        try:
+            candidates = self.provider_query.find_providers_by_url_pattern(
+                request_url,
+                similarity_threshold=self.url_matcher.similarity_threshold
+            ) or []
+        except Exception:
+            candidates = []
 
-        if not pending_sessions:
-            # 没有pending sessions时不打印日志，避免噪音
+        if not candidates:
             return None
 
-        # 先不打印日志，只有匹配成功时才打印
+        # 仅取分数最高的一个 provider 进行二次确认
+        top = candidates[0]
+        provider_id = top.get('provider_id')
+        if not provider_id:
+            return None
 
-        # 3. 遍历pending sessions，尝试匹配
-        for session in pending_sessions:
-            session_id = session.get('id')
-            provider_id = session.get('providerId')
-            task_id = session.get('taskId')
+        # 3. 二次确认：用现有综合匹配逻辑（含method/体长等权重）
+        match_result = self._match_url_with_provider(request_url, flow, provider_id)
+        if not match_result:
+            return None
 
-            if not provider_id:
-                print(f"⚠️  Session {session_id} 缺少providerId，跳过")
-                continue
+        # 4. 取该 provider 最新 Pending session
+        session = self.task_session_db.get_latest_pending_session_by_provider(provider_id, max_days_back=7)
+        if not session:
+            return None
 
-            # 4. 尝试匹配URL（结合provider的method信息）
-            match_result = self._match_url_with_provider(request_url, flow, provider_id)
+        task_id = session.get('taskId')
 
-            if match_result:
-                # 只有匹配成功时才打印所有日志
-                print(f"🔍 检查pending sessions匹配: {request_url}")
-                print(f"📋 找到 {len(pending_sessions)} 个pending sessions")
-                print(f"✅ 匹配成功！Session: {session_id}, Provider: {provider_id}")
-                print(f"   请求URL: {request_url}")
-                print(f"   匹配URL: {match_result['matched_url']}")
-                print(f"   相似度: {match_result['similarity_score']:.3f}")
-                print(f"   基础URL匹配: {match_result['base_exact_match']}")
+        # 5. 构建attestor入参
+        attestor_params = self._build_attestor_params(flow, session, provider_id, match_result)
 
-                # 5. 构建attestor入参
-                attestor_params = self._build_attestor_params(flow, session, provider_id, match_result)
+        # 5.1 将attestor入参保存到session记录中
+        self._save_attestor_params_to_session(session['id'], attestor_params)
 
-                # 5.1 将attestor入参保存到session记录中
-                self._save_attestor_params_to_session(session['id'], attestor_params)
+        # 6. 检查attestor_db中是否已有响应
+        attestor_response = self._check_attestor_response(task_id)
 
-                # 6. 检查attestor_db中是否已有响应
-                attestor_response = self._check_attestor_response(task_id)
+        # 仅当存在鉴权信息时才允许调用 attestor
+        has_auth = False
+        try:
+            sp = attestor_params.get('secretParams') or {}
+            has_auth = bool(sp.get('cookieStr') or sp.get('authorisationHeader') or sp.get('headers'))
+        except Exception:
+            has_auth = False
 
-                # 仅当存在鉴权信息时才允许调用 attestor
-                has_auth = False
-                try:
-                    sp = attestor_params.get('secretParams') or {}
-                    has_auth = bool(sp.get('cookieStr') or sp.get('authorisationHeader') or sp.get('headers'))
-                except Exception:
-                    has_auth = False
+        # 关键日志
+        try:
+            print(f"🔍 Provider优先匹配成功: provider={provider_id}")
+            print(f"   请求URL: {request_url}")
+            print(f"   匹配URL: {match_result['matched_url']}")
+            print(f"   相似度: {match_result['similarity_score']:.3f}")
+            print(f"   基础URL匹配: {match_result['base_exact_match']}")
+        except Exception:
+            pass
 
-                return {
-                    'session': session,
-                    'provider_id': provider_id,
-                    'task_id': task_id,
-                    'match_result': match_result,
-                    'attestor_params': attestor_params,
-                    'attestor_response': attestor_response,
-                    'should_call_attestor': (attestor_response is None) and has_auth
-                }
-
-        # 没有匹配时不打印日志，避免噪音
-        return None
+        return {
+            'session': session,
+            'provider_id': provider_id,
+            'task_id': task_id,
+            'match_result': match_result,
+            'attestor_params': attestor_params,
+            'attestor_response': attestor_response,
+            'should_call_attestor': (attestor_response is None) and has_auth
+        }
 
     def _build_attestor_params(self, flow, session: Dict, provider_id: str, match_result: Dict) -> Dict:
         """
@@ -593,14 +598,6 @@ class SessionBasedMatcher:
                         print(f"     分数: {score:.3f} | base_exact=True | method匹配 | {reason} -> 提升为高分")
                     except Exception:
                         pass
-                    # 仅当存在鉴权信息时才允许调用 attestor
-                    has_auth = False
-                    try:
-                        sp = attestor_params.get('secretParams') or {}
-                        has_auth = bool(sp.get('cookieStr') or sp.get('authorisationHeader') or sp.get('headers'))
-                    except Exception:
-                        has_auth = False
-
                     return {
                         'matched_url': matched_url_diag,
                         'similarity_score': score,
