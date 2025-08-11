@@ -9,10 +9,21 @@
     "zkme_express_host": "localhost",
     "zkme_express_port": 3000,
     "max_workers": 3,
+    "queue_size": 10,
     "request_timeout": 180,
     "private_key": "0x0123788edad59d7c013cdc85e4372f350f828e2cec62d9a2de4560e69aec7f89",
+    "execution_mode": "blocking_ack",
+    "add_task_id_header": false,
     "use_zkme_express": false,
-    "zkme_base_url": "http://localhost:3000"
+    "zkme_base_url": "http://localhost:3000",
+    "use_wss_attestor": false,
+    "wss_attestor_url": "wss://devint-reclaim1.mechain.tech/ws",
+    "attestor_host_port": "localhost:8001",
+    "wss_headers": {},
+    "wss_origin": "https://devint-reclaim0.mechain.tech",
+    "wss_ssl_insecure": true,
+    "wss_connect_timeout": 15,
+    "wss_enable_trace": false
   },
   "attestor_rules": {
     "enabled": true,

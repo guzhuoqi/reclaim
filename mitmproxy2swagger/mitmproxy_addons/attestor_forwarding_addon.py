@@ -52,14 +52,23 @@ except ImportError:
 class AttestorExecutor:
     """Attestor API执行器"""
 
-    def __init__(self, api_host: str = "localhost", api_port: int = 3000, max_workers: int = 3, 
-                 use_zkme_express: bool = False, zkme_base_url: str = "https://test-exp.bitkinetic.com"):
+    def __init__(self, api_host: str = "localhost", api_port: int = 3000, max_workers: int = 3,
+                 use_zkme_express: bool = False, zkme_base_url: str = "https://test-exp.bitkinetic.com",
+                 queue_size: Optional[int] = None,
+                 use_wss_attestor: bool = False, wss_attestor_url: Optional[str] = None, request_timeout: int = 180,
+                 attestor_host_port: Optional[str] = None):
         self.api_host = api_host
         self.api_port = api_port
         self.max_workers = max_workers
         self.use_zkme_express = use_zkme_express
         self.zkme_base_url = zkme_base_url
-        self.executor_queue = queue.Queue(maxsize=max_workers)
+        self.use_wss_attestor = use_wss_attestor
+        self.wss_attestor_url = wss_attestor_url
+        self.request_timeout = request_timeout
+        # 新增：本地脚本模式下的远端 attestor 地址（host:port 或 "local"）
+        self.attestor_host_port = attestor_host_port or "local"
+        # 可配置队列大小，与worker数量解耦
+        self.executor_queue = queue.Queue(maxsize=(queue_size if isinstance(queue_size, int) and queue_size > 0 else max_workers))
         self.active_tasks = {}
         self.task_counter = 0
 
@@ -83,6 +92,13 @@ class AttestorExecutor:
             
             self.zkme_client = ZkmeExpressClient(self.zkme_base_url)
             print(f"🌐 启用zkme-express模式: {self.zkme_base_url}")
+
+        # 初始化 WSS 客户端（如果需要）
+        if self.use_wss_attestor:
+            try:
+                import websocket  # websocket-client
+            except Exception:
+                print("⚠️ 未安装 websocket-client，WSS attestor 模式可能不可用。请执行: pip install websocket-client")
 
         # 初始化工作线程
         for i in range(max_workers):
@@ -121,10 +137,164 @@ class AttestorExecutor:
         self.db.save_request(task_id, request_data)
 
         # 根据配置选择执行方式
-        if self.use_zkme_express:
+        if self.use_wss_attestor and self.wss_attestor_url:
+            # 优先本地Node wrapper，以复用 attestor-core 的完整协议栈
+            self._execute_via_wss_node_wrapper(task_id, attestor_params, callback)
+        elif self.use_zkme_express:
             self._execute_via_zkme_express(task_id, attestor_params, callback)
         else:
             self._execute_via_local_script(task_id, attestor_params, callback)
+
+    def _execute_via_wss_node_wrapper(self, task_id: str, attestor_params: Dict[str, Any], callback):
+        """通过本地 Node 脚本调 WSS（使用 attestor-core createClaimOnAttestor）"""
+        try:
+            start_time = time.time()
+            import shlex, subprocess, os
+            script_path = os.path.join(os.path.dirname(__file__), 'call-attestor-wss.js')
+            params_json = json.dumps(attestor_params.get('params', {}))
+            secret_params_json = json.dumps(attestor_params.get('secretParams', {}))
+            client_url = self.wss_attestor_url
+
+            cmd = f"node {shlex.quote(script_path)} --params {shlex.quote(params_json)} --secretParams {shlex.quote(secret_params_json)} --clientUrl {shlex.quote(client_url)}"
+            env = dict(os.environ)
+            env['PRIVATE_KEY'] = env.get('PRIVATE_KEY') or '0x0123788edad59d7c013cdc85e4372f350f828e2cec62d9a2de4560e69aec7f89'
+            # 抑制 Node 的非致命警告，避免污染 stdout 导致 JSON 解析失败
+            env['NODE_NO_WARNINGS'] = env.get('NODE_NO_WARNINGS') or '1'
+            env['NODE_OPTIONS'] = (env.get('NODE_OPTIONS') + ' --no-warnings') if env.get('NODE_OPTIONS') else '--no-warnings'
+
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=self.request_timeout, env=env)
+            execution_time = time.time() - start_time
+
+            def _try_parse_json_from_stdout(stdout_str: str) -> Optional[Dict[str, Any]]:
+                # 直接解析
+                try:
+                    return json.loads(stdout_str)
+                except Exception:
+                    pass
+                # 提取第一个花括号 JSON 块
+                try:
+                    import re
+                    m = re.search(r"\{[\s\S]*\}", stdout_str)
+                    if m:
+                        return json.loads(m.group(0))
+                except Exception:
+                    pass
+                # 提取最后一行尝试解析
+                try:
+                    last_line = stdout_str.strip().splitlines()[-1]
+                    return json.loads(last_line)
+                except Exception:
+                    return None
+
+            if result.returncode == 0 and result.stdout:
+                parsed = _try_parse_json_from_stdout(result.stdout)
+                if parsed is not None:
+                    payload = parsed
+                else:
+                    payload = { 'success': False, 'error': 'Invalid JSON from node wrapper', 'stdout': result.stdout[-800:] }
+            else:
+                payload = { 'success': False, 'error': result.stderr or 'node wrapper failed', 'stdout': result.stdout[-500:] }
+
+            # 统一保存
+            save_obj = {
+                'success': bool(payload.get('success')),
+                'task_id': task_id,
+                'execution_time': execution_time
+            }
+            if payload.get('success'):
+                save_obj['receipt'] = payload.get('receipt')
+            else:
+                save_obj['error'] = payload.get('error')
+                if 'stdout' in payload:
+                    save_obj['stdout'] = payload.get('stdout')
+
+            self.db.save_response(task_id, save_obj, execution_time)
+            callback(save_obj)
+        except Exception as e:
+            callback({ 'success': False, 'error': str(e), 'task_id': task_id })
+
+    def _execute_via_wss(self, task_id: str, attestor_params: Dict[str, Any], callback):
+        """通过 WSS attestor 执行"""
+        try:
+            import websocket
+            import json as _json
+            import time as _time
+            import ssl as _ssl
+
+            start_time = time.time()
+            print(f"🚀 开始执行Attestor任务 {task_id} (通过WSS: {self.wss_attestor_url})...")
+
+            # 构造握手参数
+            header_list = []
+            if getattr(self, 'wss_headers', None):
+                for k, v in (self.wss_headers or {}).items():
+                    header_list.append(f"{k}: {v}")
+            origin = getattr(self, 'wss_origin', None)
+            sslopt = None
+            if getattr(self, 'wss_ssl_insecure', False):
+                sslopt = {"cert_reqs": _ssl.CERT_NONE, "check_hostname": False}
+
+            timeout = getattr(self, 'wss_connect_timeout', None) or self.request_timeout
+
+            # 可选 trace
+            if getattr(self, 'wss_enable_trace', False):
+                websocket.enableTrace(True)
+
+            ws = websocket.create_connection(
+                self.wss_attestor_url,
+                timeout=timeout,
+                header=header_list if header_list else None,
+                origin=origin,
+                sslopt=sslopt
+            )
+            try:
+                payload = {
+                    "type": "generate_receipt",
+                    "taskId": task_id,
+                    "params": attestor_params.get("params", {}),
+                    "secretParams": attestor_params.get("secretParams", {}),
+                }
+                ws.send(_json.dumps(payload))
+
+                # 简单等待单条响应
+                raw_msg = ws.recv()
+                execution_time = time.time() - start_time
+                try:
+                    msg = _json.loads(raw_msg)
+                except Exception:
+                    msg = {"success": False, "error": "Invalid JSON from WSS", "raw": raw_msg}
+
+                if msg.get("success"):
+                    response_data = {
+                        "success": True,
+                        "receipt": msg.get("receipt"),
+                        "task_id": task_id,
+                        "execution_time": execution_time,
+                        "timestamp": msg.get("timestamp")
+                    }
+                    self.db.save_response(task_id, response_data, execution_time)
+                else:
+                    response_data = {
+                        "success": False,
+                        "error": msg.get("error", "WSS attestor error"),
+                        "task_id": task_id,
+                        "execution_time": execution_time
+                    }
+                    self.db.save_response(task_id, response_data, execution_time)
+
+                callback(response_data)
+            finally:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"❌ WSS attestor执行失败: {e}")
+            callback({
+                "success": False,
+                "error": str(e),
+                "task_id": task_id
+            })
 
     def _execute_via_zkme_express(self, task_id: str, attestor_params: Dict[str, Any], callback):
         """通过zkme-express API执行"""
@@ -177,7 +347,24 @@ class AttestorExecutor:
 
             # 使用 shell 重定向将调试输出重定向到 /dev/null
             import shlex
-            cmd_str = f"cd {shlex.quote(os.path.dirname(os.path.dirname(attestor_script)))} && node {shlex.quote(attestor_script)} --params {shlex.quote(params_json)} --secretParams {shlex.quote(secret_params_json)} --attestor local 2>/dev/null"
+            attestor_host_port = getattr(self, 'attestor_host_port', 'local')
+
+            # 若 attestor_host_port 为完整 ws(s):// URL，走 WSS 包装脚本，避免强制 ws://
+            if isinstance(attestor_host_port, str) and (attestor_host_port.startswith('wss://') or attestor_host_port.startswith('ws://')):
+                wrapper_js = os.path.join(os.path.dirname(__file__), 'call-attestor-wss.js')
+                client_url = attestor_host_port
+                cmd_str = (
+                    f"cd {shlex.quote(os.path.dirname(os.path.dirname(attestor_script)))} && "
+                    f"node {shlex.quote(wrapper_js)} --params {shlex.quote(params_json)} "
+                    f"--secretParams {shlex.quote(secret_params_json)} --clientUrl {shlex.quote(client_url)} 2>/dev/null"
+                )
+            else:
+                # host:port 或 'local'，使用 generate-receipt-for-python.js
+                cmd_str = (
+                    f"cd {shlex.quote(os.path.dirname(os.path.dirname(attestor_script)))} && "
+                    f"node {shlex.quote(attestor_script)} --params {shlex.quote(params_json)} "
+                    f"--secretParams {shlex.quote(secret_params_json)} --attestor {shlex.quote(attestor_host_port)} 2>/dev/null"
+                )
 
             print(f"   执行命令: node generate-receipt-for-python.js [参数已隐藏]")
             print(f"   工作目录: {os.path.dirname(os.path.dirname(attestor_script))}")  # attestor-core 根目录
@@ -186,6 +373,9 @@ class AttestorExecutor:
             env = dict(os.environ)
             env['PRIVATE_KEY'] = '0x0123788edad59d7c013cdc85e4372f350f828e2cec62d9a2de4560e69aec7f89'
             env['NODE_ENV'] = 'development'
+            # 抑制 Node 的非致命警告，避免污染 stdout
+            env['NODE_NO_WARNINGS'] = env.get('NODE_NO_WARNINGS') or '1'
+            env['NODE_OPTIONS'] = (env.get('NODE_OPTIONS') + ' --no-warnings') if env.get('NODE_OPTIONS') else '--no-warnings'
 
             # 使用 Popen + communicate() 来避免 65536 字节缓冲区限制
             print(f"   使用 Popen + communicate() 避免输出截断...")
@@ -226,10 +416,30 @@ class AttestorExecutor:
             print(f"   stdout长度: {len(result.stdout) if result.stdout else 0}")
             print(f"   stderr长度: {len(result.stderr) if result.stderr else 0}")
 
-            if result.returncode == 0 and result.stdout:
+            def _try_parse_json_from_stdout(stdout_str: str):
+                # 先尝试直接解析
                 try:
-                    # 解析 JSON 输出
-                    attestor_response = json.loads(result.stdout.strip())
+                    return json.loads(stdout_str)
+                except Exception:
+                    pass
+                # 提取第一个 JSON 对象
+                try:
+                    import re
+                    m = re.search(r"\{[\s\S]*\}", stdout_str)
+                    if m:
+                        return json.loads(m.group(0))
+                except Exception:
+                    pass
+                # 尝试最后一行
+                try:
+                    return json.loads(stdout_str.strip().splitlines()[-1])
+                except Exception:
+                    return None
+
+            if result.returncode == 0 and result.stdout:
+                # 解析 JSON 输出（容错）
+                attestor_response = _try_parse_json_from_stdout(result.stdout)
+                if attestor_response is not None:
                     print(f"   解析JSON成功: {attestor_response.get('success', False)}")
 
                     if attestor_response.get("success"):
@@ -273,16 +483,16 @@ class AttestorExecutor:
                         self.db.save_response(task_id, response_data, execution_time)
                         print(f"💾 错误响应已保存到数据库")
 
-                except json.JSONDecodeError as e:
+                else:
                     # JSON 解析失败
                     response_data = {
                         "success": False,
-                        "error": f"JSON parse error: {e}",
-                        "raw_stdout": result.stdout[:500],  # 只保留前500字符
+                        "error": "JSON parse error",
+                        "raw_stdout": result.stdout[:800],  # 只保留前800字符
                         "task_id": task_id,
                         "execution_time": execution_time
                     }
-                    print(f"❌ Attestor任务 {task_id} JSON解析失败: {e}")
+                    print(f"❌ Attestor任务 {task_id} JSON解析失败")
                     print(f"   原始输出: {result.stdout[:200]}...")
 
                     # 保存JSON解析错误到数据库
@@ -456,7 +666,12 @@ class AttestorForwardingAddon:
                 "log_level": "INFO",
                 "attestor_core_path": "../attestor-core",
                 "max_workers": 3,
-                "request_timeout": 180
+                "queue_size": 10,
+                "request_timeout": 180,
+                # 执行模式：blocking_ack（202 返回）/ non_blocking（直通上游，推荐默认）
+                "execution_mode": "blocking_ack",
+                # 是否在请求与响应上附带任务ID头，便于链路追踪
+                "add_task_id_header": False
             },
             "attestor_rules": {
                 "enabled": True,
@@ -511,10 +726,14 @@ class AttestorForwardingAddon:
     def _setup_executor(self):
         """设置执行器"""
         max_workers = self.config.get("global_settings", {}).get("max_workers", 3)
+        queue_size = self.config.get("global_settings", {}).get("queue_size", None)
         api_host = self.config.get("global_settings", {}).get("zkme_express_host", "localhost")
         api_port = self.config.get("global_settings", {}).get("zkme_express_port", 3000)
         use_zkme_express = self.config.get("global_settings", {}).get("use_zkme_express", False)
         zkme_base_url = self.config.get("global_settings", {}).get("zkme_base_url", "https://test-exp.bitkinetic.com")
+        use_wss_attestor = self.config.get("global_settings", {}).get("use_wss_attestor", False)
+        wss_attestor_url = self.config.get("global_settings", {}).get("wss_attestor_url", None)
+        request_timeout = self.config.get("global_settings", {}).get("request_timeout", 180)
 
         try:
             self.executor = AttestorExecutor(
@@ -522,9 +741,17 @@ class AttestorForwardingAddon:
                 api_port=api_port, 
                 max_workers=max_workers,
                 use_zkme_express=use_zkme_express,
-                zkme_base_url=zkme_base_url
+                zkme_base_url=zkme_base_url,
+                queue_size=queue_size,
+                use_wss_attestor=use_wss_attestor,
+                wss_attestor_url=wss_attestor_url,
+                request_timeout=request_timeout,
+                attestor_host_port=self.config.get("global_settings", {}).get("attestor_host_port", "local")
             )
-            mode = "zkme-express" if use_zkme_express else "local-script"
+            if use_wss_attestor and wss_attestor_url:
+                mode = f"wss({wss_attestor_url})"
+            else:
+                mode = "zkme-express" if use_zkme_express else "local-script"
             print(f"✅ Attestor执行器初始化完成: {mode} 模式")
         except Exception as e:
             print(f"❌ Attestor执行器初始化失败: {e}")
@@ -860,21 +1087,35 @@ class AttestorForwardingAddon:
             # 提交任务（直接传递attestor_params，不再生成命令行）
             task_id = self.executor.submit_task(attestor_params, response_callback)
 
-            # 暂时阻塞请求，返回处理中的响应
-            flow.response = http.Response.make(
-                202,  # Accepted
-                json.dumps({
-                    "status": "processing",
-                    "message": "Request is being processed with attestor",
-                    "task_id": task_id,
-                    "url": flow.request.pretty_url,
-                    "rule": rule.get("name", "Unknown")
-                }).encode(),
-                {"Content-Type": "application/json"}
-            )
+            # 根据执行模式决定是否阻塞返回202或直通
+            execution_mode = self.config.get("global_settings", {}).get("execution_mode", "blocking_ack")
+            add_task_id_header = self.config.get("global_settings", {}).get("add_task_id_header", False)
 
-            # 记录待处理的响应
-            self.pending_responses[task_id] = flow
+            if add_task_id_header:
+                try:
+                    flow.request.headers["X-Attestor-Task-Id"] = task_id
+                except Exception:
+                    pass
+
+            if execution_mode == "blocking_ack":
+                # 暂时阻塞请求，返回处理中的响应
+                flow.response = http.Response.make(
+                    202,  # Accepted
+                    json.dumps({
+                        "status": "processing",
+                        "message": "Request is being processed with attestor",
+                        "task_id": task_id,
+                        "url": flow.request.pretty_url,
+                        "rule": rule.get("name", "Unknown")
+                    }).encode(),
+                    {"Content-Type": "application/json"}
+                )
+
+                # 记录待处理的响应，仅阻塞模式需要
+                self.pending_responses[task_id] = flow
+            else:
+                # 非阻塞：不设置flow.response，允许请求继续上游
+                pass
 
             self.metrics["attestor_requests"] += 1
 
@@ -927,6 +1168,22 @@ class AttestorForwardingAddon:
         """处理attestor响应"""
         task_id = result.get("task_id")
 
+        execution_mode = self.config.get("global_settings", {}).get("execution_mode", "blocking_ack")
+
+        # 非阻塞模式：不尝试写回客户端响应，只做落库/日志
+        if execution_mode == "non_blocking":
+            try:
+                if result.get("success"):
+                    self.metrics["attestor_success"] += 1
+                else:
+                    self.metrics["attestor_failures"] += 1
+                if self.logger:
+                    self.logger.info(f"Attestor任务完成(非阻塞): {task_id} success={result.get('success', False)}")
+            except Exception:
+                pass
+            return
+
+        # 阻塞模式下继续走原有回写流程
         # 检查连接状态
         if task_id not in self.pending_responses:
             print(f"⚠️  任务 {task_id} 未找到，跳过响应处理")
@@ -1164,8 +1421,12 @@ class AttestorForwardingAddon:
         print(f"   匹配URL: {match_result['matched_url']}")
         print(f"   需要调用attestor: {should_call_attestor}")
 
+        # 读取执行模式
+        execution_mode = self.config.get("global_settings", {}).get("execution_mode", "blocking_ack")
+        add_task_id_header = self.config.get("global_settings", {}).get("add_task_id_header", False)
+
         if attestor_response:
-            # 如果已有attestor响应，直接返回
+            # 如果已有attestor响应
             print(f"✅ 使用已有的attestor响应")
 
             # 更新session状态为Finished
@@ -1194,19 +1455,52 @@ class AttestorForwardingAddon:
                 update_data
             )
 
-            # 构造响应
-            flow.response = http.Response.make(
-                200,
-                json.dumps({
-                    "status": "completed",
-                    "session_id": session['id'],
-                    "task_id": task_id,
-                    "provider_id": provider_id,
-                    "attestor_response": attestor_response,
-                    "match_info": match_result
-                }),
-                {"Content-Type": "application/json"}
-            )
+            # 根据执行模式决定是否拦截响应
+            if add_task_id_header and isinstance(attestor_response, dict):
+                try:
+                    attach_id = attestor_response.get('task_id') or attestor_response.get('taskId') or task_id
+                    if attach_id:
+                        flow.request.headers["X-Attestor-Task-Id"] = str(attach_id)
+                except Exception:
+                    pass
+
+            if execution_mode == "blocking_ack":
+                # 直接将已有的attestor响应返回给客户端，避免上游调用
+                try:
+                    if attestor_response.get('success'):
+                        final_response = {
+                            "status": "success",
+                            "task_id": attestor_response.get('task_id') or attestor_response.get('taskId') or task_id,
+                            "receipt": attestor_response.get('receipt'),
+                            "extractedParameters": attestor_response.get('extractedParameters', {}),
+                            "processed_at": datetime.now().isoformat(),
+                            "execution_time": attestor_response.get('execution_time', 0),
+                            "timestamp": attestor_response.get('timestamp')
+                        }
+                        flow.response = http.Response.make(
+                            200,
+                            json.dumps(final_response, ensure_ascii=False).encode(),
+                            {"Content-Type": "application/json; charset=utf-8"}
+                        )
+                    else:
+                        error_response = {
+                            "status": "error",
+                            "task_id": attestor_response.get('task_id') or attestor_response.get('taskId') or task_id,
+                            "error": attestor_response.get('error', 'Unknown error'),
+                            "stderr": attestor_response.get('stderr', ''),
+                            "processed_at": datetime.now().isoformat(),
+                            "execution_time": attestor_response.get('execution_time', 0)
+                        }
+                        flow.response = http.Response.make(
+                            500,
+                            json.dumps(error_response, ensure_ascii=False).encode(),
+                            {"Content-Type": "application/json; charset=utf-8"}
+                        )
+                except Exception as e:
+                    print(f"❌ 写回已有attestor响应失败: {e}")
+            else:
+                # 非阻塞直通：不设置flow.response，允许继续转发
+                pass
 
         elif should_call_attestor:
             # 需要调用attestor
@@ -1215,12 +1509,7 @@ class AttestorForwardingAddon:
             # 获取provider配置
             provider = self.session_matcher.provider_query.get_provider_by_id(provider_id)
             if not provider:
-                print(f"❌ 无法获取provider配置: {provider_id}")
-                flow.response = http.Response.make(
-                    500,
-                    json.dumps({"error": f"Provider not found: {provider_id}"}),
-                    {"Content-Type": "application/json"}
-                )
+                print(f"❌ 无法获取provider配置: {provider_id}（非阻塞直通，不拦截响应）")
                 return
 
             # 在调用attestor之前，更新session状态为 Verifying
@@ -1245,13 +1534,8 @@ class AttestorForwardingAddon:
             self._call_attestor_with_provider_config(flow, provider, session, match_result, attestor_params)
 
         else:
-            # 异常情况
-            print(f"⚠️  Session匹配成功但无法确定处理方式")
-            flow.response = http.Response.make(
-                500,
-                json.dumps({"error": "Unable to determine processing method"}),
-                {"Content-Type": "application/json"}
-            )
+            # 异常情况：不拦截响应
+            print(f"⚠️  Session匹配成功但无法确定处理方式（非阻塞直通）")
 
     def _call_attestor_with_provider_config(self, flow: http.HTTPFlow, provider: Dict[str, Any],
                                           session: Dict[str, Any], match_result: Dict[str, Any],
@@ -1269,12 +1553,7 @@ class AttestorForwardingAddon:
         try:
             # 使用已构建的attestor参数（包含provider的responseMatches和responseRedactions）
             if not attestor_params:
-                print(f"❌ 没有提供attestor参数")
-                flow.response = http.Response.make(
-                    500,
-                    json.dumps({"error": "No attestor parameters provided"}),
-                    {"Content-Type": "application/json"}
-                )
+                print(f"❌ 没有提供attestor参数（非阻塞直通，不拦截响应）")
                 return
 
             print(f"✅ 使用已构建的attestor参数")
@@ -1294,39 +1573,47 @@ class AttestorForwardingAddon:
 
             # 提交任务
             if not self.executor:
-                print(f"❌ Attestor executor未初始化")
-                flow.response = http.Response.make(
-                    500,
-                    json.dumps({"error": "Attestor executor not initialized"}),
-                    {"Content-Type": "application/json"}
-                )
+                print(f"❌ Attestor executor未初始化（非阻塞直通，不拦截响应）")
                 return
 
             task_id = self.executor.submit_task(attestor_params, response_callback)
 
-            # 返回处理中的响应
-            flow.response = http.Response.make(
-                202,  # Accepted
-                json.dumps({
-                    "status": "processing",
-                    "session_id": session['id'],
-                    "task_id": task_id,
-                    "provider_id": session['providerId'],
-                    "match_info": match_result,
-                    "message": "Attestor processing started"
-                }),
-                {"Content-Type": "application/json"}
-            )
+            execution_mode = self.config.get("global_settings", {}).get("execution_mode", "blocking_ack")
+            add_task_id_header = self.config.get("global_settings", {}).get("add_task_id_header", False)
+
+            if add_task_id_header:
+                try:
+                    flow.request.headers["X-Attestor-Task-Id"] = task_id
+                except Exception:
+                    pass
+
+            if execution_mode == "blocking_ack":
+                # 阻塞返回202，且不直通上游，避免重复调用
+                try:
+                    flow.response = http.Response.make(
+                        202,
+                        json.dumps({
+                            "status": "processing",
+                            "message": "Request is being processed with attestor (session)",
+                            "task_id": task_id,
+                            "url": flow.request.pretty_url,
+                            "provider_id": (provider.get('id') if isinstance(provider, dict) else None)
+                        }).encode(),
+                        {"Content-Type": "application/json"}
+                    )
+                except Exception:
+                    pass
+
+                # 记录待处理的响应，供回调写回
+                self.pending_responses[task_id] = flow
+            else:
+                # 非阻塞直通：不写flow.response
+                pass
 
             print(f"🚀 Attestor任务已提交: {task_id}")
 
         except Exception as e:
-            print(f"❌ 调用attestor失败: {e}")
-            flow.response = http.Response.make(
-                500,
-                json.dumps({"error": f"Attestor call failed: {str(e)}"}),
-                {"Content-Type": "application/json"}
-            )
+            print(f"❌ 调用attestor失败（非阻塞直通，不拦截响应）: {e}")
 
     def _handle_session_based_attestor_response(self, flow: http.HTTPFlow, result: Dict[str, Any],
                                               session: Dict[str, Any], match_result: Dict[str, Any]) -> None:
@@ -1349,6 +1636,9 @@ class AttestorForwardingAddon:
             # 🎯 从attestor结果中提取taskId
             attestor_task_id = result.get('task_id') or result.get('taskId')
 
+            # 执行模式
+            execution_mode = self.config.get("global_settings", {}).get("execution_mode", "blocking_ack")
+
             # 🔍 详细分析attestor响应，特别是extractedParameters
             print(f"🔍 详细分析attestor响应:")
             print(f"   Success: {result.get('success', False)}")
@@ -1362,7 +1652,6 @@ class AttestorForwardingAddon:
                     print(f"   Context: {context_str}")
 
                     try:
-                        import json
                         context_obj = json.loads(context_str)
                         print(f"   Context解析成功:")
                         print(f"     providerHash: {context_obj.get('providerHash', '缺失')}")
@@ -1395,7 +1684,6 @@ class AttestorForwardingAddon:
                 # 即使成功，如果没有extractedParameters也记录一下
                 if 'claim' in result and 'context' in result['claim']:
                     try:
-                        import json
                         context_obj = json.loads(result['claim']['context'])
                         if 'extractedParameters' not in context_obj:
                             print(f"⚠️ Attestor成功但没有提取到参数，可能需要检查responseRedactions")
@@ -1414,6 +1702,57 @@ class AttestorForwardingAddon:
             )
 
             print(f"✅ Session状态已更新为: {status.value}")
+
+            # 在阻塞模式下，尝试将最终响应写回原始请求（如果仍在pending）
+            if execution_mode == "blocking_ack":
+                task_id = attestor_task_id
+                if not task_id:
+                    # 如果缺少taskId，无法定位pending flow
+                    return
+                if task_id not in self.pending_responses:
+                    print(f"⚠️  session-based 任务 {task_id} 未在pending中，跳过写回")
+                    return
+                connection_closed = self.pending_responses[task_id] == "CONNECTION_CLOSED"
+                try:
+                    if result.get('success'):
+                        receipt = result.get('receipt', {})
+                        extracted_params = result.get('extractedParameters', {})
+                        final_response = {
+                            "status": "success",
+                            "task_id": task_id,
+                            "receipt": receipt,
+                            "extractedParameters": extracted_params,
+                            "processed_at": datetime.now().isoformat(),
+                            "execution_time": result.get("execution_time", 0),
+                            "timestamp": result.get("timestamp")
+                        }
+                        if not connection_closed:
+                            flow.response = http.Response.make(
+                                200,
+                                json.dumps(final_response, ensure_ascii=False).encode(),
+                                {"Content-Type": "application/json; charset=utf-8"}
+                            )
+                    else:
+                        error_response = {
+                            "status": "error",
+                            "task_id": task_id,
+                            "error": result.get('error', 'Unknown error'),
+                            "stderr": result.get('stderr', ''),
+                            "processed_at": datetime.now().isoformat(),
+                            "execution_time": result.get('execution_time', 0)
+                        }
+                        if not connection_closed:
+                            flow.response = http.Response.make(
+                                500,
+                                json.dumps(error_response, ensure_ascii=False).encode(),
+                                {"Content-Type": "application/json; charset=utf-8"}
+                            )
+                finally:
+                    # 清理pending记录
+                    try:
+                        del self.pending_responses[task_id]
+                    except Exception:
+                        pass
 
         except Exception as e:
             print(f"❌ 处理session-based attestor响应失败: {e}")

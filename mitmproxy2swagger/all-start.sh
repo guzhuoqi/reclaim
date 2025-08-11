@@ -59,6 +59,96 @@ fi
 
 echo "📍 检测到本机IP: $LOCAL_IP"
 
+# 端口占用检查函数（打印详细占用信息与解决建议）
+check_port_free() {
+    local label="$1"   # 描述，如 "Mitm Web" 或 "代理"
+    local port="$2"
+
+    # 只检查监听状态的端口，避免误判客户端连接
+    local listening_pids
+    listening_pids=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | sort -u | xargs)
+    
+    if [ -n "$listening_pids" ]; then
+        echo ""
+        echo "❌ ${label} 端口被占用: ${port}"
+        echo "—— 占用详情 (监听进程) ——"
+        lsof -nP -iTCP:"$port" -sTCP:LISTEN || true
+        echo "—— 进程详情 (ps) ——"
+        ps -p $listening_pids -o pid,ppid,user,etime,stat,command || true
+        echo "—— 处理建议 ——"
+        for pid in $listening_pids; do
+            echo "  • 结束进程: kill $pid    (必要时: kill -9 $pid)"
+        done
+        echo "💡 如需改用其他端口，可设置环境变量（示例）："
+        echo "   ${label} 示例: ${label} 为 'Mitm Web' 则: WEB_PORT=8083 bash all-start.sh"
+        echo ""
+        exit 1
+    fi
+}
+
+# 后台启动 attestor-core（Node 服务）函数
+start_attestor_core_background() {
+    echo "🚀 启动 attestor-core（Node 服务）..."
+
+    # 默认端口与可选覆盖
+    export ATTESTOR_PORT="${ATTESTOR_PORT:-8001}"
+    # 本地默认关闭 BGP 检查以减少资源占用
+    export DISABLE_BGP_CHECKS="${DISABLE_BGP_CHECKS:-1}"
+    # 本地开发默认私钥（仅本地使用，勿用于生产）
+    export PRIVATE_KEY="${PRIVATE_KEY:-0x0123788edad59d7c013cdc85e4372f350f828e2cec62d9a2de4560e69aec7f89}"
+
+    # 创建日志目录
+    mkdir -p "$SCRIPT_DIR/logs"
+
+    # 切换到 attestor-core
+    cd "$PROJECT_ROOT/attestor-core" || return 1
+
+    # 停止已占用端口/历史进程
+    echo "🛑 清理已存在的 attestor-core 实例..."
+    # 通过端口查找监听进程
+    EXISTING_PIDS=$(lsof -nP -iTCP:$ATTESTOR_PORT -sTCP:LISTEN -t 2>/dev/null | sort -u | xargs)
+    # 通过命令关键词查找
+    if [ -z "$EXISTING_PIDS" ]; then
+        EXISTING_PIDS=$(ps aux | grep -E "lib/scripts/start-server|node lib/scripts/start-server" | grep -v grep | awk '{print $2}')
+    fi
+    if [ -n "$EXISTING_PIDS" ]; then
+        echo "📍 发现已运行的进程: $EXISTING_PIDS"
+        for pid in $EXISTING_PIDS; do
+            kill $pid 2>/dev/null || true
+        done
+        sleep 2
+    fi
+
+    # 若端口仍被占用，打印详细信息并退出
+    check_port_free "Attestor" "$ATTESTOR_PORT"
+
+    # 启动
+    echo "🎯 后台启动时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "📦 日志: $SCRIPT_DIR/logs/attestor_core_background.log"
+    if command -v nvm >/dev/null 2>&1; then
+        nvm use 18 >/dev/null 2>&1 || true
+    fi
+    PORT=$ATTESTOR_PORT nohup npm run start > "$SCRIPT_DIR/logs/attestor_core_background.log" 2>&1 &
+    ATTESTOR_PID=$!
+    echo "✅ attestor-core 已后台启动，PID: $ATTESTOR_PID (PORT=$ATTESTOR_PORT)"
+
+    # 保存 PID
+    echo $ATTESTOR_PID > /tmp/attestor_core.pid
+
+    # 等待健康检查
+    echo "⏳ 等待 attestor-core 就绪..."
+    for i in $(seq 1 20); do
+        if curl -s -f "http://127.0.0.1:$ATTESTOR_PORT/browser-rpc/" > /dev/null 2>&1; then
+            echo "✅ attestor-core 健康检查通过"
+            break
+        fi
+        sleep 0.5
+    done
+
+    # 返回脚本目录
+    cd "$SCRIPT_DIR"
+}
+
 # 后台启动API服务器函数
 start_api_server_background() {
     echo "🚀 后台启动API服务器..."
@@ -83,11 +173,13 @@ start_api_server_background() {
         sleep 2
     fi
 
-    # 设置环境变量
+    # 设置环境变量（显式覆盖 mitm 自动发现）
     export PYTHONPATH="${PYTHONPATH}:$(pwd)"
     export API_SERVER_HOST="0.0.0.0"
     export API_SERVER_PORT="8000"
     export API_SERVER_LOCAL_IP="$LOCAL_IP"
+    export MITM_HOST="127.0.0.1"
+    export MITM_PORT="${WEB_PORT:-8082}"
 
     # 创建必要目录
     mkdir -p data temp uploads logs
@@ -134,15 +226,25 @@ start_api_server_background() {
     cd "$SCRIPT_DIR"
 }
 
-# 启动 attestor-core 服务
+# 准备并启动 attestor-core
 echo ""
-echo "🚀 启动 attestor-core 服务..."
-cd "$PROJECT_ROOT/attestor-core" && PRIVATE_KEY=0x0123788edad59d7c013cdc85e4372f350f828e2cec62d9a2de4560e69aec7f89 npm run start:tsc &
-ATTESTOR_PID=$!
+echo "🚀 准备 attestor-core（编译并启动服务）..."
+cd "$PROJECT_ROOT/attestor-core" || exit 1
+if [ ! -f "lib/scripts/generate-receipt-for-python.js" ]; then
+    echo "📦 未检测到编译产物，开始编译..."
+    if command -v nvm >/dev/null 2>&1; then
+        # 优先使用 Node 18
+        nvm install 18 >/dev/null 2>&1 || true
+        nvm use 18 >/dev/null 2>&1 || true
+    fi
+    npm ci && npm run build || { echo "❌ attestor-core 编译失败"; exit 1; }
+else
+    echo "✅ 已检测到编译产物"
+fi
+cd "$SCRIPT_DIR"
 
-# 等待attestor-core服务启动
-echo "⏳ 等待 attestor-core 服务启动..."
-sleep 3
+# 启动 attestor-core
+start_attestor_core_background
 
 # 启动 API 服务器 (第二个服务)
 echo "🚀 启动 API 服务器..."
@@ -150,22 +252,32 @@ start_api_server_background
 
 # 启动 mitmproxy attestor proxy (第三个服务)
 echo "🚀 启动 mitmproxy attestor proxy..."
-echo "   代理地址: $LOCAL_IP:8080"
-echo "   Web界面: http://$LOCAL_IP:8081"
-cd "$SCRIPT_DIR/mitmproxy_addons" && python3 start_attestor_proxy.py --mode web --host "$LOCAL_IP" --web-port 8081 --listen-port 8080 &
+# 固定端口：代理 8080，Web 8082（可用环境变量覆盖，但默认不改动）
+PROXY_PORT=${PROXY_PORT:-8080}
+WEB_PORT=${WEB_PORT:-8082}
+
+# 若被占用则直接报错，打印详细占用信息
+check_port_free "代理" "$PROXY_PORT"
+check_port_free "Mitm Web" "$WEB_PORT"
+
+echo "   代理地址: $LOCAL_IP:$PROXY_PORT"
+echo "   Web界面: http://$LOCAL_IP:$WEB_PORT"
+cd "$SCRIPT_DIR/mitmproxy_addons" && \
+    python3 start_attestor_proxy.py --mode web --host "$LOCAL_IP" --web-port "$WEB_PORT" --listen-port "$PROXY_PORT" &
 PROXY_PID=$!
 
 echo "✅ 所有服务已启动"
 echo "================================="
-echo "📊 attestor-core PID: $ATTESTOR_PID"
+echo "📊 attestor-core PID: ${ATTESTOR_PID:-$(cat /tmp/attestor_core.pid 2>/dev/null || echo '')}"
 echo "📊 API服务器 PID: $API_SERVER_PID"
 echo "📊 mitmproxy proxy PID: $PROXY_PID"
 echo ""
 echo "🌐 服务地址:"
-echo "   • Attestor Core: http://localhost:3000"
+echo "   • Attestor WS: ws://$LOCAL_IP:${ATTESTOR_PORT:-8001}/ws"
+echo "   • Attestor Browser RPC: http://$LOCAL_IP:${ATTESTOR_PORT:-8001}/browser-rpc/"
 echo "   • API服务器: http://$LOCAL_IP:8000"
 echo "   • API文档: http://$LOCAL_IP:8000/docs"
-echo "   • Mitmproxy Web: http://$LOCAL_IP:8081"
+echo "   • Mitmproxy Web: http://$LOCAL_IP:8082"
 echo "   • 代理服务器: $LOCAL_IP:8080"
 echo ""
 echo "🔧 浏览器代理配置:"
@@ -184,6 +296,18 @@ cleanup() {
     if [ ! -z "$ATTESTOR_PID" ]; then
         echo "   停止 attestor-core (PID: $ATTESTOR_PID)"
         kill $ATTESTOR_PID 2>/dev/null
+    fi
+    if [ -f "/tmp/attestor_core.pid" ]; then
+        pid=$(cat /tmp/attestor_core.pid)
+        if kill -0 $pid 2>/dev/null; then
+            echo "   停止 attestor-core (PID: $pid)"
+            kill $pid 2>/dev/null
+            sleep 2
+            if kill -0 $pid 2>/dev/null; then
+                kill -9 $pid 2>/dev/null
+            fi
+        fi
+        rm -f /tmp/attestor_core.pid
     fi
 
     # 停止API服务器
