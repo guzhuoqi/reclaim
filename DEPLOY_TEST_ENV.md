@@ -34,6 +34,16 @@ main-flow 显式通过环境变量覆盖自动发现（更稳定）：
 - mitm：启动命令里调整 `--listen-port` 与 `--set web_port=...`
 - main-flow：改 `MITM_HOST/MITM_PORT` 与 `API_SERVER_HOST/API_SERVER_PORT`
 
+
+
+### 注意事项
+
+其中，上文的：mitm 代理监听端口：`8080`（浏览器/设备代理使用）
+
+这里需要提供一个公网访问的ip、端口，给用户打开浏览器的时候做绑定，这样浏览器访问的流量才能打到代理。
+
+
+
 ---
 
 ## 部署步骤
@@ -134,10 +144,10 @@ curl -s http://127.0.0.1:8000/health          # 应返回 {"status":"healthy", .
   ```bash
   # 赋予执行权限（首次）
   chmod +x /opt/reclaim/deploy_test_env.sh
-
+  
   # 默认按 /opt/reclaim 目录布局部署（后台启动 mitmweb 与 main-flow）
   BASE_DIR=/opt/reclaim /opt/reclaim/deploy_test_env.sh
-
+  
   # 如使用自定义目录：
   BASE_DIR=/your/reclaim /your/reclaim/deploy_test_env.sh
   ```
@@ -149,5 +159,4 @@ curl -s http://127.0.0.1:8000/health          # 应返回 {"status":"healthy", .
 - main-flow 提示无法发现 mitm：确保 `MITM_HOST/MITM_PORT` 已设置，且 `MITM_PORT` 指向 8082（mitmweb），不是 8080
 - addon 找不到 `attestor-core`：确认目录同级，且 `npm run build` 已生成 `lib/scripts/generate-receipt-for-python.js`
 - 证书问题：在客户端安装 mitm 根证书；若仍红锁，确认代理设置已生效且访问的确走代理
-
 
