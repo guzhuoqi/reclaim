@@ -1,0 +1,132 @@
+
+@/mitmproxy2swagger/main-flow
+这个工程下，我们刚刚支持了paramValues，现在想回退这部分代码，不需要做这个支持的。
+
+integrated_main_pipeline.py 跑一下主流程，读temp离线文件即可
+
+mitmproxy_addons 这个工程下，我们刚刚支持了paramValues，
+现在想回退这部分代码，不需要做这个支持的。
+
+attestor-core 通过local的方式调create claim；
+如果你清楚，先把命令输出给我看看，等待我下一步指令。
+
+
+
+npm run create:claim:python
+-- --params '{"url":"https://api.example.com","method":"GET"}'
+--secretParams '{"headers":{"Authorization":"Bearer token"}}'
+--attestor local
+
+参考这种方式，然后参数你就取用：sessions_2025-08-08.json
+另外：我们参考cmb-wing-lung-enhanced.json，把paramValues也加上；
+
+"error":{"code":5,"message":"First client message request is redacted. Cannot parse"
+这个error已经困扰我们很久了，你结合web的reclaim协议的经验，深入分析一下原因。
+
+
+    "writeRedactionMode": "zk"
+这个修正到你刚刚写的test脚本中试试？
+
+"error":{"code":5,"message":"First client message request is redacted. Cannot parse"
+这个错误一直都存在，你就这么粗心的吗？
+
+    "responseMatches": [
+      {
+        "type": "regex",
+        "value": "HKD[^\\d]*(\\d[\\d,]*\\.\\d{2})"
+      },
+      {
+        "type": "regex",
+        "value": "USD[^\\d]*(\\d[\\d,]*\\.\\d{2})"
+      },
+      {
+        "type": "regex",
+        "value": "CNY[^\\d]*(\\d[\\d,]*\\.\\d{2})"
+      }
+    ],
+    "responseRedactions": [
+      {
+        "regex": "HKD[^\\d]*(\\d[\\d,]*\\.\\d{2})"
+      }
+    ],
+    直接采用这个段试试
+
+
+
+    ### 根因概念
+- **错误含义**: Attestor 必须从 TLS 解密后的“首条客户端 HTTP 请求”中解析 method/path/host。如果这条请求被 redaction（例如用 `*` 覆盖），解析不到任何语义，就抛出该错误。
+- **触发条件**: 首个客户端 Application Data 的第一个字节就是 redaction 占位符（通常是 `*`），即“请求行从偏移 0 就被遮蔽”。
+
+```274:278:attestor-core/src/utils/http-parser.ts
+if(clientMsgs[0].message[0] === REDACTION_CHAR_CODE) {
+  console.log(`❌ 第一个客户端消息被redacted，无法解析`)
+  throw new Error('First client message request is redacted. Cannot parse')
+}
+```
+
+### 常见根因
+- **过度 redaction 策略**:
+  - 配置了错误的 `writeRedactionMode`（如对请求方向 redact-all），导致首包整块被遮蔽。
+  - redaction 正则过宽，从字节偏移 0 命中请求行（含 method/URL），把整行盖掉。
+- **协议/分片影响**:
+  - TLS 1.2/KeyUpdate 或分片差异导致首个可解析 HTTP 请求恰好在被 redaction 的记录里，从 0 偏移开始被覆写。
+- **Reveal 配置不当**:
+  - 未正确执行首条记录的 directReveal/zk reveal，导致仅能输出 redacted 数据。
+- **误用 redaction 目标**:
+  - 把“请求方向”的敏感内容做了全字段覆盖，而不是仅对 header 值或 body 的具体字段进行捕获组 redaction。
+
+### 规避与修复要点
+- **确保首行可见**:
+  - 不在请求方向做全包 redaction；限制 redaction 不覆盖请求行（method 与 path）。
+  - 使用命名捕获组仅遮蔽“值”而非整段文本，避免从偏移 0 命中。
+- **选择性 redaction**:
+  - 若支持，使用 “zk/选择性 redaction” 模式，只对命中的捕获组产生证明并遮蔽，不动请求行。
+- **TLS/Reveal 调整**:
+  - 确保对 recordNumber=0 的 directReveal 生效，或避免在首条可解析请求之前发生 KeyUpdate。
+- **配置策略**:
+  - 若有 `requestRedactions`，限定到具体 header 值/body 字段；`responseRedactions` 与 `responseMatches` 保持同一正则、命名捕获组，仅作用于响应。
+
+### 快速验证
+- 用“无 redaction/最小化 redaction”配置重跑（仓库已有 `test-minimal-claim.js`、`debug-redaction-issue.js`）。
+- 检查 receipt transcript 的首条 client message 是否以 `*` 开头；若是，即命中本错误根因。
+- 逐步恢复 redaction（先请求方向禁用→仅对响应生效→再细化到命名捕获组），确认是哪条规则导致从偏移 0 覆盖。
+
+
+- 配置意图
+  - 确保“首条客户端请求”可被解析，所以不要把请求行(method/path/HTTP 版本)或整块请求数据给遮蔽掉。
+  - 需要证明/提取的数据通常在响应里，所以把红action聚焦在响应，更安全也更符合需求。
+
+- requestRedactions 该怎么用
+  - 仅针对请求里的敏感“值”做遮蔽，比如某些 header 的 value 或 body 里的字段值。
+  - 不要写会命中请求首字节或整行的规则，避免覆盖到 method/path（否则会触发 “First client message request is redacted”）。
+  - 示例（仅遮蔽 Cookie 中的会话值，不碰请求行）:
+    - 目标：`Cookie: JSESSIONID=xxxx; dse_sessionId=yyyy`
+    - 正则：`JSESSIONID=(?<jsid>[^;]+)` 或 `dse_sessionId=(?<dseid>[^;]+)`
+
+- responseRedactions 与 responseMatches 要一致
+  - 两者使用同一条正则，并使用命名捕获组，对同一片段生效：
+    - responseMatches 用于“找出/证明”你要提取的值。
+    - responseRedactions 用于“遮蔽”同一片段，避免泄露明文。
+  - 这样保证“证明的是什么，就遮蔽什么”，避免不一致导致的解析/验证问题。
+  - 示例（仅捕获并遮蔽余额数字）:
+    - responseMatches:
+      - type: regex
+      - value: `HKD[^\d]*(?<hkd_balance>\d[\d,]*\.\d{2})`
+    - responseRedactions:
+      - regex: `HKD[^\d]*(?<hkd_balance>\d[\d,]*\.\d{2})`
+
+- 为什么“仅作用于响应”
+  - 解析流程需要读取首条客户端请求来建立上下文；如果在请求方向做宽泛 redaction，极易把请求行首字节盖掉，解析失败。
+  - 业务上我们关心的证明一般来自响应（余额、状态等），把 redaction/匹配集中在响应即可满足需求并规避风险。
+
+- 实操要点
+  - 不在请求方向使用“整包/整行”红action；仅对 header 值或 body 字段做精确遮蔽。
+  - 响应侧让 responseMatches 与 responseRedactions 1:1 同步，使用命名捕获组，且正则完全一致。
+  - 若仍触发错误，检查是否有规则会命中请求首字节或 recordNumber=0 的数据，必要时移除该规则或只对响应生效。
+
+  ---
+  我明白了，我误会 responseRedactions 的用途了，你自行调整下我的responseRedactions，然后再跑一下。
+
+
+
+  修改attestor_params的参数逻辑：请求heads挪到params、而不是secretParams。
