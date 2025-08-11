@@ -19,15 +19,22 @@ export class AttestorSocket implements IAttestorSocket {
 		public metadata: InitRequest,
 		public logger: Logger
 	) {
-		socket.addEventListener('error', (event) => {
-			const witErr = AttestorError.fromError(
-				event.error
-					|| new Error(event.message)
-			)
-			witErr.code = 'ERROR_NETWORK_ERROR'
+    socket.addEventListener('error', (event) => {
+      // Normalise different event shapes between browser WebSocket and ws
+      // Browser: ErrorEvent has { message, error }
+      // ws: 'error' event passes Error as the first arg. Here we are using addEventListener
+      // so we may get a plain Event with no details; fallback to a generic error message.
+      const anyEvent: any = event as any
+      const underlyingError: any =
+        anyEvent?.error
+        || anyEvent?.message && new Error(anyEvent.message)
+        || new Error('WebSocket error')
 
-			this.dispatchRPCEvent('connection-terminated', witErr)
-		})
+      const witErr = AttestorError.fromError(underlyingError)
+      witErr.code = 'ERROR_NETWORK_ERROR'
+
+      this.dispatchRPCEvent('connection-terminated', witErr)
+    })
 
 		socket.addEventListener('close', () => (
 			this.dispatchRPCEvent(
@@ -106,9 +113,9 @@ export class AttestorSocket implements IAttestorSocket {
 		}
 
 		try {
-			const witErr = err
-				? AttestorError.fromError(err)
-				: new AttestorError('ERROR_NO_ERROR', '')
+        const witErr = err
+        ? AttestorError.fromError(err)
+        : new AttestorError('ERROR_NO_ERROR', 'connection closed')
 			this.dispatchRPCEvent('connection-terminated', witErr)
 			if(this.isOpen) {
 				await this.sendMessage({
