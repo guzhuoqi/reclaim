@@ -18,6 +18,7 @@ from enum import Enum
 class SessionStatus(Enum):
     """Session状态枚举"""
     PENDING = "Pending"
+    VERIFYING = "Verifying"
     FINISHED = "Finished"
     FAILED = "Failed"
 

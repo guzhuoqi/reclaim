@@ -1223,6 +1223,24 @@ class AttestorForwardingAddon:
                 )
                 return
 
+            # 在调用attestor之前，更新session状态为 Verifying
+            try:
+                from task_session_db import SessionStatus
+                update_data = {
+                    'matched_url': match_result['matched_url'],
+                    'similarity_score': match_result['similarity_score'],
+                    'processed_by': 'session_based_matcher',
+                    'verifying_at': time.time()
+                }
+                self.session_matcher.task_session_db.update_session_status(
+                    session['id'],
+                    SessionStatus.VERIFYING,
+                    update_data
+                )
+                print(f"🔄 Session状态已更新为: {SessionStatus.VERIFYING.value}")
+            except Exception as e:
+                print(f"⚠️ 调用前更新Session状态为Verifying失败: {e}")
+
             # 使用provider配置调用attestor
             self._call_attestor_with_provider_config(flow, provider, session, match_result, attestor_params)
 
