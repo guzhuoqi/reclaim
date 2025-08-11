@@ -110,10 +110,25 @@ class IntegratedMainPipeline:
         mitm_port = self.config['mitm_port']
 
         try:
-            url = f"http://{mitm_host}:{mitm_port}/flows/dump"
+            base = f"http://{mitm_host}:{mitm_port}"
+            url = f"{base}/flows/dump"
             print(f"🔍 检测mitm代理状态: {mitm_host}:{mitm_port}")
 
-            response = requests.get(url, timeout=5)
+            # 兼容 mitmweb CSRF 保护：先访问首页拿 csrftoken，再携带头部访问 /flows/dump
+            session = requests.Session()
+            try:
+                r0 = session.get(base + "/", timeout=5)
+                csrf_token = session.cookies.get('csrftoken') or session.cookies.get('csrf_token')
+                headers = {
+                    'X-CSRFToken': csrf_token
+                } if csrf_token else {}
+                # 补充Referer与XHR头，兼容严格模式
+                headers['Referer'] = base + "/"
+                headers['X-Requested-With'] = 'XMLHttpRequest'
+                response = session.get(url, headers=headers, timeout=5)
+            except Exception:
+                # 回退到直接请求
+                response = requests.get(url, timeout=5)
 
             if response.status_code == 200:
                 content_length = len(response.content)
@@ -160,7 +175,8 @@ class IntegratedMainPipeline:
         mitm_port = self.config['mitm_port']
         
         # 构建API URL，如果指定了大小限制，尝试通过查询参数间接控制
-        base_url = f"http://{mitm_host}:{mitm_port}/flows/dump"
+        base = f"http://{mitm_host}:{mitm_port}"
+        base_url = f"{base}/flows/dump"
         if max_download_bytes:
             # 估算流量条数限制（假设平均每条流量约10KB）
             estimated_flows = max(1, max_download_bytes // (10 * 1024))
@@ -175,8 +191,19 @@ class IntegratedMainPipeline:
             print(f"   源地址: {url}")
             print(f"   目标文件: {output_file}")
 
-            # 使用curl命令导出，可选限制下载大小
-            curl_cmd = ['curl', '-s', url]
+            # 获取 CSRF token（如果有）
+            csrf_token = None
+            try:
+                s = requests.Session()
+                s.get(base + "/", timeout=5)
+                csrf_token = s.cookies.get('csrftoken') or s.cookies.get('csrf_token')
+            except Exception:
+                csrf_token = None
+
+            # 使用curl命令导出，可选限制下载大小（携带 CSRF/Referer/XHR）
+            curl_cmd = ['curl', '-s', url, '-H', f'Referer: {base}/', '-H', 'X-Requested-With: XMLHttpRequest']
+            if csrf_token:
+                curl_cmd.extend(['-H', f'X-CSRFToken: {csrf_token}', '-b', f'csrftoken={csrf_token}'])
             if max_download_bytes:
                 curl_cmd.extend(['--max-filesize', str(max_download_bytes)])
                 print(f"   限制下载大小: {max_download_bytes} bytes ({max_download_bytes / 1024 / 1024:.1f}MB)")

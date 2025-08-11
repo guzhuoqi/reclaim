@@ -123,6 +123,35 @@ python3 independent_api_server.py
 # - API 文档:  http://<server-ip>:8000/docs
 ```
 
+### 使用 Docker 一键本地启动（测试环境）
+
+如需本地快速体验，也可使用 docker-compose（基于本仓库新增的 `docker-compose.test-env.yml`）。该编排会：
+- 构建并启动 `attestor-core`（容器内 8001）
+- 启动 mitmweb + `attestor_forwarding_addon.py`（容器内 8080/8082）
+- 启动 `main-flow` 独立 API 服务（容器内 8000）
+
+其中 addon 采用“本地 Node.js 脚本”模式，直接调用容器内的 `attestor-core/lib/scripts/generate-receipt-for-python.js`，不走远端 WSS。
+
+```bash
+# 在仓库根目录执行
+docker compose -f docker-compose.test-env.yml build
+docker compose -f docker-compose.test-env.yml up -d
+
+# 访问：
+# - mitmweb:   http://127.0.0.1:8082/
+# - 代理设置:  <本机IP>:8080
+# - main-flow: http://127.0.0.1:8000/health  http://127.0.0.1:8000/docs
+```
+
+容器之间网络：
+- addon 通过挂载的仓库路径访问 `attestor-core/lib/scripts/generate-receipt-for-python.js`
+- `attestor_forwarding_config.json` 中 `use_wss_attestor=false` 且 `attestor_host_port=local`，即强制走本地脚本
+
+停止与清理：
+```bash
+docker compose -f docker-compose.test-env.yml down
+```
+
 ### 4. 快速验证
 ```bash
 # 在服务器上：
