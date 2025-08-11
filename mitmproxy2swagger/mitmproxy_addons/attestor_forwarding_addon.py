@@ -360,14 +360,17 @@ class AttestorExecutor:
                 )
             else:
                 # host:port 或 'local'，使用 generate-receipt-for-python.js
+                fixed_workdir = "/opt/reclaim/attestor-core/lib"
+                # 直接用相对路径 scripts/generate-receipt-for-python.js，防止路径重复
                 cmd_str = (
-                    f"cd {shlex.quote(os.path.dirname(os.path.dirname(attestor_script)))} && "
-                    f"node {shlex.quote(attestor_script)} --params {shlex.quote(params_json)} "
-                    f"--secretParams {shlex.quote(secret_params_json)} --attestor {shlex.quote(attestor_host_port)} 2>/dev/null"
+                    f"cd {fixed_workdir} && "
+                    f"node scripts/generate-receipt-for-python.js --params {shlex.quote(params_json)} "
+                    f"--secretParams {shlex.quote(secret_params_json)} --attestor {shlex.quote(attestor_host_port)}"
                 )
 
             print(f"   执行命令: node generate-receipt-for-python.js [参数已隐藏]")
-            print(f"   工作目录: {os.path.dirname(os.path.dirname(attestor_script))}")  # attestor-core 根目录
+            print(f"   工作目录: /opt/reclaim/attestor-core/lib")  # 固定绝对路径
+            print(f"   attestor_host_port: {attestor_host_port}")
 
             # 设置环境变量
             env = dict(os.environ)

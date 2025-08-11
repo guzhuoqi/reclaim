@@ -22,6 +22,7 @@ services:
     working_dir: /opt/reclaim/mitmproxy2swagger/mitmproxy_addons
     volumes:
       - ./mitmproxy2swagger:/opt/reclaim/mitmproxy2swagger
+      - ./attestor-core:/opt/reclaim/attestor-core
     environment:
       - PYTHONUNBUFFERED=1
       # Force addon to use local Node.js script mode
@@ -43,7 +44,8 @@ services:
       - API_SERVER_HOST=0.0.0.0
       - API_SERVER_PORT=8000
       - MITM_HOST=mitm
-      - MITM_PORT=8082
+      - MITM_PORT=8083
+      - PYTHONPATH=/app
     ports:
       - "8000:8000"
     depends_on:
@@ -51,6 +53,8 @@ services:
     volumes:
       - ./mitmproxy2swagger/main-flow:/app/main-flow
       - ./mitmproxy2swagger/mitmproxy_addons:/app/mitmproxy_addons
+      - ./mitmproxy2swagger/feature-library:/app/feature-library
+      - ./mitmproxy2swagger/mitmproxy2swagger:/app/mitmproxy2swagger
     restart: unless-stopped
 
 networks:
