@@ -34,25 +34,32 @@ class ProviderQuery:
         Returns:
             数据目录路径
         """
-        # 优先使用环境变量
+        # 优先使用环境变量 - 修复：确保返回环境变量指定的路径
         env_data_dir = os.getenv('MAIN_FLOW_DATA_DIR')
-        if env_data_dir and os.path.exists(env_data_dir):
-            return env_data_dir
+        if env_data_dir:
+            if os.path.exists(env_data_dir):
+                print(f"✅ 使用环境变量指定的数据目录: {env_data_dir}")
+                return env_data_dir
+            else:
+                print(f"⚠️  环境变量指定的目录不存在: {env_data_dir}")
         
         # Docker 容器内的绝对路径
         container_data_dir = "/app/main-flow/data"
         if os.path.exists(container_data_dir):
+            print(f"✅ 使用容器数据目录: {container_data_dir}")
             return container_data_dir
             
         # 相对路径（本地开发环境）
         relative_data_dir = "../main-flow/data"
         relative_path = Path(relative_data_dir)
         if relative_path.exists():
+            print(f"✅ 使用相对数据目录: {relative_data_dir}")
             return relative_data_dir
             
         # 当前目录下的 data 目录
         current_data_dir = "data"
         if os.path.exists(current_data_dir):
+            print(f"✅ 使用当前目录下的data: {current_data_dir}")
             return current_data_dir
             
         # 默认返回相对路径
