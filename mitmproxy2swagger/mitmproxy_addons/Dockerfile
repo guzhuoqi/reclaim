@@ -3,7 +3,7 @@ FROM ${NODE_IMAGE}
 
 # Install Python and pip for mitmproxy and addon deps
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends python3 python3-pip python3-venv ca-certificates curl && \
+    apt-get install -y --no-install-recommends python3 python3-pip python3-venv ca-certificates curl make g++ && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/reclaim
@@ -18,7 +18,7 @@ COPY ./attestor-core/package.json ./attestor-core/package-lock.json /opt/reclaim
 RUN mkdir -p /opt/reclaim/attestor-core/src/scripts \
     && sh -lc 'echo "" > /opt/reclaim/attestor-core/src/scripts/prepare.sh' \
     && if [ "$SKIP_ATTESTOR_BUILD" != "true" ]; then \
-         cd /opt/reclaim/attestor-core && npm ci $NPM_CI_ARGS ; \
+         cd /opt/reclaim/attestor-core && npm ci --include=optional $NPM_CI_ARGS ; \
        else \
          echo "⏭️  Skip npm ci for attestor-core (will rely on runtime volume)" ; \
        fi

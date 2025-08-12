@@ -177,8 +177,82 @@ class URLMatcher:
         # 基础URL综合相似度（取平均值）
         base_similarity = (base_similarity_seq + base_similarity_jaccard + base_similarity_levenshtein) / 3
 
-        # 2. 查询参数相似度
+        # 2. 查询参数相似度（纯字符串对比，用于辅助参考）
         query_similarity = self.calculate_string_similarity(comp1['query'], comp2['query'])
+
+        # 2.1 语义化查询相似度：忽略易变参数后，评估键重合与值一致
+        import re
+        params1 = comp1['query_params'] or {}
+        params2 = comp2['query_params'] or {}
+
+        # 忽略易变参数（通用正则，不做银行定制）
+        volatile_key_patterns = [
+            r"(?i)(^|_|\b)(ts|time|timestamp|session|sid|sessionid|nonce|rand|random)(_|\b|$)",
+            r"(?i)^utm_[a-z0-9_]+$",
+            r"(?i)^cachebust$",
+        ]
+        def is_volatile(key: str) -> bool:
+            k = key or ""
+            for pat in volatile_key_patterns:
+                if re.search(pat, k):
+                    return True
+            return False
+
+        keys1 = {k for k in params1.keys() if not is_volatile(k)}
+        keys2 = {k for k in params2.keys() if not is_volatile(k)}
+        union_keys = keys1 | keys2
+        inter_keys = keys1 & keys2
+
+        # 键重合度
+        key_overlap = (len(inter_keys) / len(union_keys)) if union_keys else (1.0 if not comp1['query'] and not comp2['query'] else 0.0)
+
+        # 值一致度（对交集键，比较值列表的集合是否相等，使用“值复杂度加权”）
+        def _norm_vals(v):
+            try:
+                if isinstance(v, list):
+                    return tuple(sorted(str(x) for x in v))
+                return (str(v),)
+            except Exception:
+                return (str(v),)
+
+        def _estimate_pair_weight(vals_tuple_1, vals_tuple_2) -> float:
+            def _estimate_vals_weight(vals_tuple) -> float:
+                # 以“最长元素长度 + 词元数”估计复杂度权重，范围大致在[1, 3]
+                try:
+                    elements = list(vals_tuple)
+                except Exception:
+                    elements = [str(vals_tuple)]
+                if not elements:
+                    return 1.0
+                max_len = 0
+                token_count = 0
+                for s in elements:
+                    s = str(s)
+                    if len(s) > max_len:
+                        max_len = len(s)
+                    token_count += len(re.findall(r"[A-Za-z0-9]+", s))
+                # 长度分：max_len/20 上限 1.0；词元分：token_count/10 上限 1.0；基线 1.0
+                length_component = min(1.0, max_len / 20.0)
+                token_component = min(1.0, token_count / 10.0)
+                return 1.0 + length_component + token_component
+
+            w1 = _estimate_vals_weight(vals_tuple_1)
+            w2 = _estimate_vals_weight(vals_tuple_2)
+            return max(w1, w2)
+
+        total_weight = 0.0
+        equal_weight = 0.0
+        for k in inter_keys:
+            v1 = _norm_vals(params1.get(k))
+            v2 = _norm_vals(params2.get(k))
+            pair_weight = _estimate_pair_weight(v1, v2)
+            total_weight += pair_weight
+            if v1 == v2:
+                equal_weight += pair_weight
+        if inter_keys and total_weight > 0:
+            value_match = equal_weight / total_weight
+        else:
+            value_match = 1.0 if not comp1['query'] and not comp2['query'] else 0.0
 
         # 3. 完整URL相似度
         full_similarity_seq = self.calculate_string_similarity(url1, url2)
@@ -192,17 +266,32 @@ class URLMatcher:
 
         # 5. 综合评分 - 🎯 修复：降低基础URL权重，提高查询参数权重
         if base_exact_match:
-            # 如果基础URL完全匹配，则直接认为高度相似；
-            # 若存在查询参数，则在高基线分上再叠加查询相似度权重
-            base_line = 0.9 if (not comp1['query'] and not comp2['query']) else 0.6
-            composite_score = max(base_line, 0.3 + (query_similarity * 0.7))
+            # 基础URL一致：
+            # - 无query：高基线
+            # - 有query：依据键重合与值一致度进行语义评分，忽略易变参数
+            if not comp1['query'] and not comp2['query']:
+                composite_score = 0.9
+            else:
+                composite_score = 0.2 + (0.4 * key_overlap) + (0.4 * value_match) + (0.2 * query_similarity)
+                # 整体查询长度差异惩罚（越不一致，扣分越多，最多扣 0.15）
+                qlen1 = len(comp1['query']) if comp1['query'] else 0
+                qlen2 = len(comp2['query']) if comp2['query'] else 0
+                if qlen1 > 0 and qlen2 > 0:
+                    length_disparity = abs(qlen1 - qlen2) / max(qlen1, qlen2)
+                else:
+                    length_disparity = 0.0
+                composite_score -= 0.15 * length_disparity
+                if composite_score < 0.0:
+                    composite_score = 0.0
+                if composite_score > 1.0:
+                    composite_score = 1.0
         else:
             # 否则使用加权平均
             composite_score = (base_similarity * self.base_url_weight +
                              query_similarity * self.params_weight)
 
-        # 命中判断：允许基础URL完全相等时直接命中
-        is_match_flag = (composite_score >= self.similarity_threshold) or base_exact_match
+        # 命中判断：仅以综合分与阈值判断
+        is_match_flag = (composite_score >= self.similarity_threshold)
 
         return {
             'base_similarity': base_similarity,
@@ -217,7 +306,9 @@ class URLMatcher:
                 'base_similarity_levenshtein': base_similarity_levenshtein,
                 'full_similarity_seq': full_similarity_seq,
                 'full_similarity_jaccard': full_similarity_jaccard,
-                'full_similarity_levenshtein': full_similarity_levenshtein
+                'full_similarity_levenshtein': full_similarity_levenshtein,
+                'key_overlap': key_overlap,
+                'value_match': value_match
             }
         }
 

@@ -1,7 +1,8 @@
-FROM node:lts
+ARG NODE_IMAGE=node:lts
+FROM ${NODE_IMAGE}
 
-# install git
-RUN apt update -y && apt upgrade -y && apt install git -y
+# install build tools for native modules (re2) and git
+RUN apt update -y && apt upgrade -y && apt install -y git python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 ARG GL_TOKEN
 RUN git config --global url."https://git-push-pull:${GL_TOKEN}@gitlab.reclaimprotocol.org".insteadOf "https://gitlab.reclaimprotocol.org"
@@ -13,7 +14,7 @@ RUN echo '' > /app/src/scripts/prepare.sh
 
 WORKDIR /app
 
-RUN npm i
+RUN npm ci --include=optional
 
 COPY ./ /app
 
