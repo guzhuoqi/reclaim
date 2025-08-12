@@ -27,8 +27,8 @@ export function promisifySend(ws: WSWebSocket) {
 		return ws
 	}
 
-	ws.sendPromise = (data) => (
-		new Promise((resolve, reject) => {
+  ws.sendPromise = (data) => (
+    new Promise<void>((resolve, reject) => {
 			ws.send(data, err => {
 				if(err) {
 					reject(err)

@@ -11,7 +11,9 @@ WORKDIR /opt/reclaim
 # Build-time toggles for attestor-core handling
 ARG SKIP_ATTESTOR_BUILD=false
 ARG USE_PREBUILT_LIB=true
-ARG NPM_CI_ARGS=--omit=dev
+# Install devDependencies during build so TypeScript and build-time tools are available
+# We'll prune devDeps after build to keep the final image slim
+ARG NPM_CI_ARGS=
 
 # Copy and (optionally) build attestor-core (for local script execution inside addon)
 COPY ./attestor-core/package.json ./attestor-core/package-lock.json /opt/reclaim/attestor-core/
