@@ -48,7 +48,7 @@ WORKDIR /opt/reclaim/mitmproxy2swagger/mitmproxy_addons
 # Use isolated venv to avoid PEP 668 restriction
 RUN python3 -m venv /venv
 ENV PATH="/venv/bin:${PATH}"
-RUN pip3 --version && python3 --version && pip3 install --no-cache-dir "mitmproxy>=11.0.2,<12" websocket-client requests
+RUN pip3 --version && python3 --version && pip3 install --no-cache-dir "mitmproxy==9.0.1" websocket-client requests
 
 # Create data/logs directories inside container
 RUN mkdir -p /app/mitmproxy_addons/logs /app/mitmproxy_addons/data
