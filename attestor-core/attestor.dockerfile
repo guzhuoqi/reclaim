@@ -1,4 +1,4 @@
-ARG NODE_IMAGE=node:lts
+ARG NODE_IMAGE=node:20-bookworm
 FROM ${NODE_IMAGE}
 
 # install build tools for native modules (re2) and git
