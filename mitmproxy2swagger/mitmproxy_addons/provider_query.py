@@ -14,16 +14,50 @@ from datetime import datetime
 class ProviderQuery:
     """Provider查询器"""
 
-    def __init__(self, data_dir: str = "../main-flow/data"):
+    def __init__(self, data_dir: str = None):
         """
         初始化Provider查询器
 
         Args:
-            data_dir: 数据目录路径
+            data_dir: 数据目录路径，如果为None则自动检测
         """
+        if data_dir is None:
+            data_dir = self._detect_data_dir()
         self.data_dir = Path(data_dir)
         self._provider_cache = {}
         self._cache_timestamp = {}
+
+    def _detect_data_dir(self) -> str:
+        """
+        自动检测数据目录路径
+        
+        Returns:
+            数据目录路径
+        """
+        # 优先使用环境变量
+        env_data_dir = os.getenv('MAIN_FLOW_DATA_DIR')
+        if env_data_dir and os.path.exists(env_data_dir):
+            return env_data_dir
+        
+        # Docker 容器内的绝对路径
+        container_data_dir = "/app/main-flow/data"
+        if os.path.exists(container_data_dir):
+            return container_data_dir
+            
+        # 相对路径（本地开发环境）
+        relative_data_dir = "../main-flow/data"
+        relative_path = Path(relative_data_dir)
+        if relative_path.exists():
+            return relative_data_dir
+            
+        # 当前目录下的 data 目录
+        current_data_dir = "data"
+        if os.path.exists(current_data_dir):
+            return current_data_dir
+            
+        # 默认返回相对路径
+        print(f"⚠️  未找到有效的数据目录，使用默认路径: {relative_data_dir}")
+        return relative_data_dir
 
     def _get_provider_files(self) -> List[Path]:
         """获取所有provider文件"""
