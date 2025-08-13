@@ -124,9 +124,18 @@ class SessionBasedMatcher:
             return None
 
         # 4. 取该 provider 最新 Pending session
+        print(f"🔍 查找 provider_id={provider_id} 的 pending session...")
         session = self.task_session_db.get_latest_pending_session_by_provider(provider_id, max_days_back=7)
         if not session:
+            print(f"❌ 未找到 provider_id={provider_id} 的 pending session")
+            # 调试：列出所有 pending sessions
+            all_pending = self.task_session_db.get_pending_sessions(max_days_back=7)
+            print(f"📊 当前所有 pending sessions ({len(all_pending)} 个):")
+            for i, s in enumerate(all_pending, 1):
+                print(f"   {i}. session_id={s.get('id')}, provider_id={s.get('providerId')}, status={s.get('status')}")
             return None
+        else:
+            print(f"✅ 找到 pending session: session_id={session.get('id')}, provider_id={session.get('providerId')}")
 
         task_id = session.get('taskId')
 

@@ -145,6 +145,116 @@
             padding: 15px;
             margin-bottom: 10px;
         }
+        
+        .provider-details {
+            display: none;
+            margin-top: 10px;
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        
+        .provider-details.expanded {
+            display: block;
+        }
+        
+        .collapse-btn {
+            background: none;
+            border: none;
+            color: #007bff;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 0;
+            margin-left: 10px;
+        }
+        
+        .collapse-btn:hover {
+            text-decoration: underline;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        .providers-controls {
+            margin-bottom: 15px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .providers-search {
+            padding: 8px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            min-width: 250px;
+        }
+        
+        .providers-pagination {
+            margin-top: 15px;
+            text-align: center;
+        }
+        
+        .page-btn {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            color: #495057;
+            padding: 6px 12px;
+            margin: 0 2px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .page-btn:hover {
+            background: #e9ecef;
+        }
+        
+        .page-btn.active {
+            background: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        
+        .provider-summary {
+            cursor: pointer;
+        }
+        
+        .provider-summary:hover {
+            background: #e9ecef;
+            padding: 5px;
+            margin: -5px;
+            border-radius: 4px;
+        }
+        
+        .json-input {
+            width: 100%;
+            min-width: 400px;
+            min-height: 80px;
+            padding: 8px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            resize: vertical;
+            background-color: #f8f9fa;
+        }
+        
+        .json-input:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+        }
+        
+        .btn-info {
+            background-color: #17a2b8;
+            color: white;
+            border: 1px solid #17a2b8;
+        }
+        
+        .btn-info:hover {
+            background-color: #138496;
+            border-color: #117a8b;
+        }
         .provider-actions { margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
         .inline-input { padding: 6px 8px; border: 1px solid #ced4da; border-radius: 4px; }
         .provider-actions { margin-top: 10px; display: flex; gap: 10px; }
@@ -275,9 +385,20 @@
         
         <div class="providers-section">
             <h3>Provider配置列表</h3>
+            <div class="providers-controls">
+                <input type="text" id="providerSearch" class="providers-search" placeholder="搜索银行名称、Provider ID或API端点...">
+                <select id="providerPageSize" class="form-control" style="width: auto;">
+                    <option value="5">每页5个</option>
+                    <option value="10" selected>每页10个</option>
+                    <option value="20">每页20个</option>
+                    <option value="-1">显示全部</option>
+                </select>
+                <button class="btn btn-secondary" onclick="toggleAllProviders()">全部展开/折叠</button>
+            </div>
             <div id="providersContainer">
                 <p style="color: #666; text-align: center;">暂无Provider配置</p>
             </div>
+            <div id="providersPagination" class="providers-pagination"></div>
         </div>
 
         <div class="domain-section">
@@ -339,9 +460,20 @@
         const addDomainBtn = document.getElementById('addDomainBtn');
         const reloadDomainBtn = document.getElementById('reloadDomainBtn');
         const domainTableBody = document.getElementById('domainTableBody');
+        // Provider控制元素
+        const providerSearch = document.getElementById('providerSearch');
+        const providerPageSize = document.getElementById('providerPageSize');
+        const providersPagination = document.getElementById('providersPagination');
         
         // 状态轮询定时器
         let statusPolling = null;
+        
+        // Provider数据和状态
+        let allProviders = [];
+        let filteredProviders = [];
+        let currentPage = 1;
+        let pageSize = 10;
+        let allExpanded = false;
         
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
@@ -352,6 +484,10 @@
             resetBtn.addEventListener('click', resetStatus);
             addDomainBtn.addEventListener('click', upsertDomainHomepage);
             reloadDomainBtn.addEventListener('click', loadDomainHomepages);
+            
+            // Provider控制事件
+            providerSearch.addEventListener('input', filterProviders);
+            providerPageSize.addEventListener('change', changePageSize);
             
             // 初始状态检查
             checkStatus();
@@ -371,7 +507,12 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
-                    }
+                    },
+                    body: JSON.stringify({
+                        mitm_host: 'mitm',
+                        mitm_port: 8083,
+                        output_dir: 'data'
+                    })
                 });
                 
                 const result = await response.json();
@@ -588,11 +729,62 @@
         function displayProviders(data) {
             if (!data || !data.providers || data.providers.length === 0) {
                 providersContainer.innerHTML = '<p style="color: #666; text-align: center;">暂无Provider配置</p>';
+                providersPagination.innerHTML = '';
+                allProviders = [];
+                filteredProviders = [];
                 return;
             }
             
+            // 保存所有provider数据
+            allProviders = data.providers;
+            filterProviders(); // 应用当前搜索和分页
+        }
+        
+        // 过滤Providers
+        function filterProviders() {
+            const searchTerm = providerSearch.value.toLowerCase().trim();
+            
+            if (!searchTerm) {
+                filteredProviders = [...allProviders];
+            } else {
+                filteredProviders = allProviders.filter(provider => {
+                    const bankInfo = extractBankInfo(provider);
+                    const bankName = (bankInfo?.institution || bankInfo?.bankName || bankInfo?.name || provider?.name || '').toLowerCase();
+                    const pid = String(provider?.providerId || provider?.id || provider?.providerConfig?.providerId || '').toLowerCase();
+                    const apiEndpoint = (bankInfo?.apiEndpoint || bankInfo?.endpoint || '').toLowerCase();
+                    const loginUrl = (extractLoginUrl(provider) || '').toLowerCase();
+                    
+                    return bankName.includes(searchTerm) || 
+                           pid.includes(searchTerm) || 
+                           apiEndpoint.includes(searchTerm) ||
+                           loginUrl.includes(searchTerm);
+                });
+            }
+            
+            currentPage = 1;
+            renderProviders();
+            renderPagination();
+        }
+        
+        // 渲染当前页的Providers
+        function renderProviders() {
+            if (filteredProviders.length === 0) {
+                providersContainer.innerHTML = '<p style="color: #666; text-align: center;">未找到匹配的Provider</p>';
+                return;
+            }
+            
+            let startIndex = 0;
+            let endIndex = filteredProviders.length;
+            
+            if (pageSize > 0) {
+                startIndex = (currentPage - 1) * pageSize;
+                endIndex = Math.min(startIndex + pageSize, filteredProviders.length);
+            }
+            
+            const pageProviders = filteredProviders.slice(startIndex, endIndex);
             let html = '';
-            data.providers.forEach((provider) => {
+            
+            pageProviders.forEach((provider) => {
                 const bankInfo = extractBankInfo(provider);
                 const pid = String(provider?.providerId || provider?.id || provider?.providerConfig?.providerId || '').toString();
                 const pidShort = pid ? `${pid}`.substring(0, 8) + '...' : '-';
@@ -602,57 +794,179 @@
                 const loginUrl = extractLoginUrl(provider) || '-';
                 const innerUrl = extractInnerUrl(provider) || '-';
                 const currencies = Array.isArray(bankInfo?.supportedCurrencies) ? bankInfo.supportedCurrencies.join(', ') : '-';
+                
                 html += `
                     <div class="provider-card">
-                        <div class="provider-header">
-                            <div class="provider-name">🏦 ${escapeHtml(bankName)}</div>
-                            <div class="provider-info">ID: ${escapeHtml(pidShort)}</div>
+                        <div class="provider-summary" onclick="toggleProvider('${escapeAttr(pid)}')">
+                            <div class="provider-header">
+                                <div class="provider-name">🏦 ${escapeHtml(bankName)}</div>
+                                <div style="display: flex; align-items: center;">
+                                    <div class="provider-info">ID: ${escapeHtml(pidShort)}</div>
+                                    <button class="collapse-btn" id="toggle-${escapeAttr(pid)}">展开详情 ▼</button>
+                                </div>
+                            </div>
+                            <div class="provider-info">
+                                银行代码: ${escapeHtml(bankCode)} | 
+                                API端点: ${escapeHtml(apiEndpoint)} | 
+                                支持币种: ${escapeHtml(currencies)}
+                            </div>
                         </div>
-                        <div class="provider-info">
-                            银行代码: ${escapeHtml(bankCode)} | 
-                            API端点: ${escapeHtml(apiEndpoint)} | 
-                            支持币种: ${escapeHtml(currencies)}
-                        </div>
-                        <div class="provider-info">
-                            请求URL: ${innerUrl !== '-' ? `<a href="${escapeAttr(innerUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(innerUrl)}</a>` : '-'}
-                        </div>
-                        <div class="provider-info">
-                            登录页: ${loginUrl !== '-' ? `<a href="${escapeAttr(loginUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(loginUrl)}</a>` : '-'}
-                        </div>
-                        <div class="provider-info">
-                            Provider ID: <span style="font-family: 'Courier New', monospace;">${escapeHtml(pid)}</span>
-                        </div>
-                        <div class="provider-actions">
-                            <button class="btn btn-success" onclick="createTaskSession('${escapeAttr(pid)}')">生成Session</button>
-                            <span id="session-status-${escapeAttr(pid)}" style="font-size:12px;color:#666"></span>
-                        </div>
-                        <div class="provider-actions">
-                            <input class="inline-input" style="min-width: 320px" type="text" placeholder="loginUrl" value="${escapeAttr(loginUrl)}" id="login-${escapeAttr(pid)}" />
-                            <input class="inline-input" type="text" placeholder="institution" value="${escapeAttr(bankName)}" id="inst-${escapeAttr(pid)}" />
-                            <input class="inline-input" type="text" placeholder="api_type" value="${escapeAttr(bankInfo?.api_type || '')}" id="api-${escapeAttr(pid)}" />
-                            <input class="inline-input" type="text" placeholder="priority_level" value="${escapeAttr(bankInfo?.priority_level || '')}" id="prio-${escapeAttr(pid)}" />
-                            <input class="inline-input" type="number" step="0.1" placeholder="value_score" value="${escapeAttr(String(bankInfo?.value_score ?? ''))}" id="score-${escapeAttr(pid)}" />
-                        </div>
-                        <div class="provider-actions">
-                            <input class="inline-input" type="text" placeholder="geoLocation" value="${escapeAttr(provider?.providerConfig?.providerConfig?.geoLocation || '')}" id="geo-${escapeAttr(pid)}" />
-                            <input class="inline-input" type="text" placeholder="injectionType" value="${escapeAttr(provider?.providerConfig?.providerConfig?.injectionType || '')}" id="inj-${escapeAttr(pid)}" />
-                            <input class="inline-input" style="min-width: 260px" type="text" placeholder="pageTitle" value="${escapeAttr(provider?.providerConfig?.providerConfig?.pageTitle || '')}" id="title-${escapeAttr(pid)}" />
-                        </div>
-                        <div class="provider-actions">
-                            <input class="inline-input" style="min-width: 280px" type="text" placeholder="userAgent_ios" value="${escapeAttr(provider?.providerConfig?.providerConfig?.userAgent?.ios || '')}" id="ua-ios-${escapeAttr(pid)}" />
-                            <input class="inline-input" style="min-width: 280px" type="text" placeholder="userAgent_android" value="${escapeAttr(provider?.providerConfig?.providerConfig?.userAgent?.android || '')}" id="ua-and-${escapeAttr(pid)}" />
-                        </div>
-                        <div class="provider-actions">
-                            <input class="inline-input" type="number" min="0" placeholder="request index" id="rqi-${escapeAttr(pid)}" />
-                            <input class="inline-input" type="number" min="0" placeholder="match index" id="rmi-${escapeAttr(pid)}" />
-                            <input class="inline-input" style="min-width: 380px" type="text" placeholder="regex value" id="rx-${escapeAttr(pid)}" />
-                            <button class="btn btn-secondary" onclick="saveProviderEdits('${escapeAttr(pid)}')">保存</button>
+                        
+                        <div class="provider-details" id="details-${escapeAttr(pid)}">
+                            <div class="provider-info">
+                                请求URL: ${innerUrl !== '-' ? `<a href="${escapeAttr(innerUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(innerUrl)}</a>` : '-'}
+                            </div>
+                            <div class="provider-info">
+                                登录页: ${loginUrl !== '-' ? `<a href="${escapeAttr(loginUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(loginUrl)}</a>` : '-'}
+                            </div>
+                            <div class="provider-info">
+                                Provider ID: <span style="font-family: 'Courier New', monospace;">${escapeHtml(pid)}</span>
+                            </div>
+                            <div class="provider-actions">
+                                <button class="btn btn-success" onclick="createTaskSession('${escapeAttr(pid)}')">生成Session</button>
+                                <span id="session-status-${escapeAttr(pid)}" style="font-size:12px;color:#666"></span>
+                            </div>
+                            <div class="provider-actions">
+                                <input class="inline-input" style="min-width: 320px" type="text" placeholder="loginUrl" value="${escapeAttr(loginUrl)}" id="login-${escapeAttr(pid)}" />
+                                <input class="inline-input" type="text" placeholder="institution" value="${escapeAttr(bankName)}" id="inst-${escapeAttr(pid)}" />
+                                <input class="inline-input" type="text" placeholder="api_type" value="${escapeAttr(bankInfo?.api_type || '')}" id="api-${escapeAttr(pid)}" />
+                                <input class="inline-input" type="text" placeholder="priority_level" value="${escapeAttr(bankInfo?.priority_level || '')}" id="prio-${escapeAttr(pid)}" />
+                                <input class="inline-input" type="number" step="0.1" placeholder="value_score" value="${escapeAttr(String(bankInfo?.value_score ?? ''))}" id="score-${escapeAttr(pid)}" />
+                            </div>
+                            <div class="provider-actions">
+                                <input class="inline-input" type="text" placeholder="geoLocation" value="${escapeAttr(provider?.providerConfig?.providerConfig?.geoLocation || '')}" id="geo-${escapeAttr(pid)}" />
+                                <input class="inline-input" type="text" placeholder="injectionType" value="${escapeAttr(provider?.providerConfig?.providerConfig?.injectionType || '')}" id="inj-${escapeAttr(pid)}" />
+                                <input class="inline-input" style="min-width: 260px" type="text" placeholder="pageTitle" value="${escapeAttr(provider?.providerConfig?.providerConfig?.pageTitle || '')}" id="title-${escapeAttr(pid)}" />
+                            </div>
+                            <div class="provider-actions">
+                                <input class="inline-input" style="min-width: 280px" type="text" placeholder="userAgent_ios" value="${escapeAttr(provider?.providerConfig?.providerConfig?.userAgent?.ios || '')}" id="ua-ios-${escapeAttr(pid)}" />
+                                <input class="inline-input" style="min-width: 280px" type="text" placeholder="userAgent_android" value="${escapeAttr(provider?.providerConfig?.providerConfig?.userAgent?.android || '')}" id="ua-and-${escapeAttr(pid)}" />
+                            </div>
+                            <div class="provider-actions">
+                                <label style="font-weight: bold; margin-right: 10px;">RequestData JSON:</label>
+                                <textarea class="json-input" rows="3" placeholder='[{"url": "...", "responseMatches": [...]}]' id="req-data-${escapeAttr(pid)}">${escapeHtml(JSON.stringify(extractRequestData(provider), null, 2))}</textarea>
+                            </div>
+                            <div class="provider-actions">
+                                <label style="font-weight: bold; margin-right: 10px;">ResponseMatches JSON:</label>
+                                <textarea class="json-input" rows="3" placeholder='[{"type": "regex", "value": "..."}]' id="resp-matches-${escapeAttr(pid)}">${escapeHtml(JSON.stringify(extractResponseMatches(provider), null, 2))}</textarea>
+                            </div>
+                            <div class="provider-actions">
+                                <button class="btn btn-secondary" onclick="saveProviderEdits('${escapeAttr(pid)}')">保存配置</button>
+                                <button class="btn btn-info" onclick="formatProviderJSON('${escapeAttr(pid)}')">格式化JSON</button>
+                            </div>
                         </div>
                     </div>
                 `;
             });
             
             providersContainer.innerHTML = html;
+        }
+        
+        // 渲染分页控件
+        function renderPagination() {
+            if (pageSize <= 0 || filteredProviders.length <= pageSize) {
+                providersPagination.innerHTML = '';
+                return;
+            }
+            
+            const totalPages = Math.ceil(filteredProviders.length / pageSize);
+            const maxVisiblePages = 5;
+            let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+            let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+            
+            if (endPage - startPage + 1 < maxVisiblePages) {
+                startPage = Math.max(1, endPage - maxVisiblePages + 1);
+            }
+            
+            let html = `<span style="margin-right: 15px;">共 ${filteredProviders.length} 个Provider，第 ${currentPage} / ${totalPages} 页</span>`;
+            
+            // 上一页
+            if (currentPage > 1) {
+                html += `<button class="page-btn" onclick="changePage(${currentPage - 1})">上一页</button>`;
+            }
+            
+            // 页码
+            for (let i = startPage; i <= endPage; i++) {
+                const activeClass = i === currentPage ? 'active' : '';
+                html += `<button class="page-btn ${activeClass}" onclick="changePage(${i})">${i}</button>`;
+            }
+            
+            // 下一页
+            if (currentPage < totalPages) {
+                html += `<button class="page-btn" onclick="changePage(${currentPage + 1})">下一页</button>`;
+            }
+            
+            providersPagination.innerHTML = html;
+        }
+        
+        // 切换页面
+        function changePage(page) {
+            currentPage = page;
+            renderProviders();
+            renderPagination();
+        }
+        
+        // 改变每页大小
+        function changePageSize() {
+            pageSize = parseInt(providerPageSize.value);
+            currentPage = 1;
+            renderProviders();
+            renderPagination();
+        }
+        
+        // 切换Provider详情显示
+        function toggleProvider(pid) {
+            const details = document.getElementById(`details-${pid}`);
+            const toggleBtn = document.getElementById(`toggle-${pid}`);
+            
+            if (details.classList.contains('expanded')) {
+                details.classList.remove('expanded');
+                toggleBtn.textContent = '展开详情 ▼';
+            } else {
+                details.classList.add('expanded');
+                toggleBtn.textContent = '折叠详情 ▲';
+            }
+        }
+        
+        // 格式化Provider的JSON
+        function formatProviderJSON(providerId) {
+            try {
+                const reqDataEl = document.getElementById(`req-data-${providerId}`);
+                const respMatchesEl = document.getElementById(`resp-matches-${providerId}`);
+                
+                if (reqDataEl && reqDataEl.value.trim()) {
+                    const reqData = JSON.parse(reqDataEl.value);
+                    reqDataEl.value = JSON.stringify(reqData, null, 2);
+                }
+                
+                if (respMatchesEl && respMatchesEl.value.trim()) {
+                    const respMatches = JSON.parse(respMatchesEl.value);
+                    respMatchesEl.value = JSON.stringify(respMatches, null, 2);
+                }
+                
+                showAlert('JSON格式化成功', 'success');
+            } catch (e) {
+                showAlert(`JSON格式化失败: ${e.message}`, 'error');
+            }
+        }
+
+        // 全部展开/折叠
+        function toggleAllProviders() {
+            allExpanded = !allExpanded;
+            const allDetails = document.querySelectorAll('.provider-details');
+            const allToggleBtns = document.querySelectorAll('.collapse-btn');
+            
+            allDetails.forEach(details => {
+                if (allExpanded) {
+                    details.classList.add('expanded');
+                } else {
+                    details.classList.remove('expanded');
+                }
+            });
+            
+            allToggleBtns.forEach(btn => {
+                btn.textContent = allExpanded ? '折叠详情 ▲' : '展开详情 ▼';
+            });
         }
 
         function extractBankInfo(provider) {
@@ -692,6 +1006,30 @@
             }
             if (typeof provider.loginUrl === 'string') return provider.loginUrl;
             return '';
+        }
+
+        function extractRequestData(provider) {
+            if (!provider || typeof provider !== 'object') return [];
+            const pc = provider.providerConfig;
+            if (pc && typeof pc === 'object') {
+                const pc2 = pc.providerConfig;
+                if (pc2 && typeof pc2 === 'object' && Array.isArray(pc2.requestData)) {
+                    return pc2.requestData;
+                }
+                if (Array.isArray(pc.requestData)) {
+                    return pc.requestData;
+                }
+            }
+            if (Array.isArray(provider.requestData)) return provider.requestData;
+            return [];
+        }
+
+        function extractResponseMatches(provider) {
+            const requestData = extractRequestData(provider);
+            if (requestData.length > 0 && Array.isArray(requestData[0].responseMatches)) {
+                return requestData[0].responseMatches;
+            }
+            return [];
         }
 
         function extractInnerUrl(provider) {
@@ -735,10 +1073,32 @@
             if (titleEl && titleEl.value.trim()) payload.pageTitle = titleEl.value.trim();
             if (uaIosEl && uaIosEl.value.trim()) payload.userAgent_ios = uaIosEl.value.trim();
             if (uaAndEl && uaAndEl.value.trim()) payload.userAgent_android = uaAndEl.value.trim();
-            if (rqiEl && rmiEl && rxEl && rqiEl.value !== '' && rmiEl.value !== '' && rxEl.value.trim()) {
-                payload.regex_request_index = Number(rqiEl.value);
-                payload.regex_match_index = Number(rmiEl.value);
-                payload.regex_value = rxEl.value.trim();
+            // 处理JSON数据
+            const reqDataEl = document.getElementById(`req-data-${providerId}`);
+            const respMatchesEl = document.getElementById(`resp-matches-${providerId}`);
+            
+            try {
+                if (reqDataEl && reqDataEl.value.trim()) {
+                    const requestData = JSON.parse(reqDataEl.value.trim());
+                    if (Array.isArray(requestData)) {
+                        payload.requestData = requestData;
+                    }
+                }
+            } catch (e) {
+                showAlert(`RequestData JSON格式错误: ${e.message}`, 'error');
+                return;
+            }
+            
+            try {
+                if (respMatchesEl && respMatchesEl.value.trim()) {
+                    const responseMatches = JSON.parse(respMatchesEl.value.trim());
+                    if (Array.isArray(responseMatches)) {
+                        payload.responseMatches = responseMatches;
+                    }
+                }
+            } catch (e) {
+                showAlert(`ResponseMatches JSON格式错误: ${e.message}`, 'error');
+                return;
             }
             if (Object.keys(payload).length === 0) {
                 showAlert('没有需要保存的字段', 'error');

@@ -269,18 +269,19 @@ class ReclaimProviderBuilder:
                             pass
                         else:
                             # 中国银行香港：基于 table cell class 的严格规则（只加入 responseMatches）
+                            # 注意：使用更简单的正则表达式避免转义问题
                             strict_class_rules = [
                                 (
-                                    r'data_table_swap1_txt data_table_lastcell"[^>]*>(?P<hkd_balance>[\d,]+\.\d{2})</td>',
-                                    '严格规则：BOC HKD 余额（class锚点）'
+                                    r'data_table_swap1_txt[^>]*data_table_lastcell[^>]*>(?P<hkd_balance>[\d,]+\.\d{2})</td>',
+                                    '严格规则：BOC HKD 余额（简化锚点）'
                                 ),
                                 (
-                                    r'data_table_swap2_txt data_table_lastcell"[^>]*>(?P<usd_balance>[\d,]+\.\d{2})</td>',
-                                    '严格规则：BOC USD 余额（class锚点）'
+                                    r'data_table_swap2_txt[^>]*data_table_lastcell[^>]*>(?P<usd_balance>[\d,]+\.\d{2})</td>',
+                                    '严格规则：BOC USD 余额（简化锚点）'
                                 ),
                                 (
-                                    r'data_table_subtotal data_table_lastcell"[^>]*>(?P<total_balance>[\d,]+\.\d{2})</td>',
-                                    '严格规则：BOC 总余额（class锚点）'
+                                    r'data_table_subtotal[^>]*data_table_lastcell[^>]*>(?P<total_balance>[\d,]+\.\d{2})</td>',
+                                    '严格规则：BOC 总余额（简化锚点）'
                                 ),
                             ]
                             for regex, desc in strict_class_rules:
@@ -2326,6 +2327,27 @@ class ReclaimProviderBuilder:
                 return True
             else:
                 print(f"❌ 正则匹配失败: {regex_pattern}")
+                # 🔍 添加更详细的调试信息
+                print(f"   内容长度: {len(content)}")
+                print(f"   内容前500字符: {repr(content[:500])}")
+
+                # 尝试简化的匹配来诊断问题
+                simplified_patterns = [
+                    r'data_table_swap1_txt',
+                    r'data_table_lastcell',
+                    r'\d+\.\d{2}',
+                    r'</td>'
+                ]
+
+                for simple_pattern in simplified_patterns:
+                    simple_match = re.search(simple_pattern, content, re.DOTALL)
+                    if simple_match:
+                        print(f"   ✓ 简化模式匹配成功: {simple_pattern}")
+                        print(f"     位置: {simple_match.start()}-{simple_match.end()}")
+                        print(f"     内容: {simple_match.group()}")
+                    else:
+                        print(f"   ✗ 简化模式匹配失败: {simple_pattern}")
+
                 return False
         except Exception as e:
             print(f"❌ 正则表达式测试失败: {regex_pattern}, 错误: {e}")
