@@ -31,6 +31,13 @@ import queue
 from attestor_db import get_attestor_db
 import requests
 
+# 可选依赖
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+
 from mitmproxy import http, ctx
 from mitmproxy.addonmanager import Loader
 
@@ -75,7 +82,7 @@ class AttestorExecutor:
         # 初始化数据库
         self.db = get_attestor_db()
         print(f"📊 Attestor 数据库已初始化: {self.db.base_dir}")
-        
+
         # 初始化zkme-express客户端（如果需要）
         if self.use_zkme_express:
             try:
@@ -89,7 +96,7 @@ class AttestorExecutor:
                 if current_dir not in sys.path:
                     sys.path.insert(0, current_dir)
                 from zkme_express_client import ZkmeExpressClient
-            
+
             self.zkme_client = ZkmeExpressClient(self.zkme_base_url)
             print(f"🌐 启用zkme-express模式: {self.zkme_base_url}")
 
@@ -300,12 +307,12 @@ class AttestorExecutor:
         """通过zkme-express API执行"""
         try:
             print(f"🚀 开始执行Attestor任务 {task_id} (通过zkme-express API)...")
-            
+
             # 使用asyncio运行异步方法
             import asyncio
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            
+
             try:
                 result = loop.run_until_complete(
                     self.zkme_client.execute_attestor_task(task_id, attestor_params)
@@ -313,7 +320,7 @@ class AttestorExecutor:
                 callback(result)
             finally:
                 loop.close()
-                
+
         except Exception as e:
             print(f"❌ zkme-express执行失败: {e}")
             callback({
@@ -329,6 +336,7 @@ class AttestorExecutor:
             start_time = time.time()
             print(f"🚀 开始执行Attestor任务 {task_id} (通过子进程调用Node.js)...")
             print(f"💾 请求已保存到数据库")
+            print(f"⏰ 开始时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}")
 
             # 构建命令行参数 - 使用编译后的 JavaScript 文件
             attestor_script = os.path.join(
@@ -344,10 +352,13 @@ class AttestorExecutor:
             print(f"🔍 调试 - 传递给attestor的参数:")
             print(f"   params: {params_json[:200]}...")
             print(f"   secretParams: {secret_params_json}")
+            print(f"   脚本路径: {attestor_script}")
+            print(f"   脚本存在: {os.path.exists(attestor_script)}")
 
             # 使用 shell 重定向将调试输出重定向到 /dev/null
             import shlex
             attestor_host_port = getattr(self, 'attestor_host_port', 'local')
+            print(f"   attestor_host_port: {attestor_host_port}")
 
             # 若 attestor_host_port 为完整 ws(s):// URL，走 WSS 包装脚本，避免强制 ws://
             if isinstance(attestor_host_port, str) and (attestor_host_port.startswith('wss://') or attestor_host_port.startswith('ws://')):
@@ -384,6 +395,7 @@ class AttestorExecutor:
             print(f"   使用 Popen + communicate() 避免输出截断...")
 
             try:
+                print(f"   🔄 启动子进程...")
                 process = subprocess.Popen(
                     cmd_str,
                     shell=True,
@@ -392,8 +404,30 @@ class AttestorExecutor:
                     text=True,
                     env=env
                 )
+                print(f"   📋 进程 PID: {process.pid}")
+
+                # 监控进程状态（如果 psutil 可用）
+                if HAS_PSUTIL:
+                    def monitor_process():
+                        try:
+                            proc = psutil.Process(process.pid)
+                            while proc.is_running():
+                                memory_mb = proc.memory_info().rss / 1024 / 1024
+                                cpu_percent = proc.cpu_percent()
+                                print(f"   📊 进程监控 PID={process.pid}: 内存={memory_mb:.1f}MB, CPU={cpu_percent:.1f}%")
+                                time.sleep(10)  # 每10秒监控一次
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                        except Exception as e:
+                            print(f"   ⚠️ 进程监控异常: {e}")
+
+                    monitor_thread = threading.Thread(target=monitor_process, daemon=True)
+                    monitor_thread.start()
+                else:
+                    print(f"   ⚠️ psutil 不可用，跳过进程监控")
 
                 # 使用 communicate() 获取完整输出，无大小限制
+                print(f"   ⏳ 等待进程完成 (超时: 180秒)...")
                 stdout, stderr = process.communicate(timeout=180)
 
                 # 创建兼容的 result 对象
@@ -404,12 +438,14 @@ class AttestorExecutor:
                         self.stderr = stderr
 
                 result = PopenResult(process.returncode, stdout, stderr)
-                print(f"   ✅ 获取完整输出: stdout={len(stdout)} 字符, stderr={len(stderr)} 字符")
+                print(f"   ✅ 进程完成: 返回码={process.returncode}, stdout={len(stdout)} 字符, stderr={len(stderr)} 字符")
 
             except subprocess.TimeoutExpired:
+                print(f"   ⏰ 进程超时，强制终止 PID={process.pid}")
                 process.kill()
                 stdout, stderr = process.communicate()
                 result = PopenResult(process.returncode, stdout, stderr)
+                print(f"   💀 进程已终止: stdout={len(stdout)} 字符, stderr={len(stderr)} 字符")
                 raise subprocess.TimeoutExpired(cmd_str, 180)
 
             execution_time = time.time() - start_time
@@ -740,8 +776,8 @@ class AttestorForwardingAddon:
 
         try:
             self.executor = AttestorExecutor(
-                api_host=api_host, 
-                api_port=api_port, 
+                api_host=api_host,
+                api_port=api_port,
                 max_workers=max_workers,
                 use_zkme_express=use_zkme_express,
                 zkme_base_url=zkme_base_url,
@@ -964,7 +1000,7 @@ class AttestorForwardingAddon:
             host.startswith('192.168.') or
             any(f':{port}' in host for port in range(3000, 10000))
         )
-        
+
         # 静态资源文件扩展名
         static_extensions = {
             '.js', '.ts', '.jsx', '.tsx',           # JavaScript/TypeScript
@@ -976,47 +1012,47 @@ class AttestorForwardingAddon:
             '.json', '.xml',                        # 数据文件
             '.txt', '.md'                           # 文档
         }
-        
+
         # 静态资源路径特征
         static_paths = {
             '/src/', '/assets/', '/static/', '/public/',
             '/js/', '/css/', '/img/', '/images/', '/fonts/',
             '/node_modules/', '/dist/', '/build/'
         }
-        
+
         # 开发环境API路径特征（通常不是金融业务API）
         dev_api_paths = {
             '/home', '/api/task-sessions/', '/api/debug/', '/api/health/',
             '/api/status/', '/api/metrics/', '/api/logs/', '/health',
             '/status', '/ping', '/version', '/favicon.ico'
         }
-        
+
         path_lower = path.lower()
-        
+
         # 1. 开发环境：过滤静态资源和开发API
         if is_dev_host:
             # 检查文件扩展名
             if any(path_lower.endswith(ext) for ext in static_extensions):
                 return True
-                
+
             # 检查静态资源路径特征
             if any(segment in path_lower for segment in static_paths):
                 return True
-                
+
             # 检查开发环境API路径
             if any(path_lower.startswith(dev_path) or dev_path in path_lower for dev_path in dev_api_paths):
                 return True
-        
+
         # 2. 生产环境：只过滤明确的静态资源
         else:
             # 检查静态资源文件扩展名
             if any(path_lower.endswith(ext) for ext in static_extensions):
                 return True
-                
+
             # 检查静态资源路径特征
             if any(segment in path_lower for segment in static_paths):
                 return True
-            
+
         return False
 
     def _match_domains(self, host: str, domains: List[str]) -> bool:

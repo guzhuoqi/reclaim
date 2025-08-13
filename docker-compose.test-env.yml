@@ -6,12 +6,25 @@ services:
       args:
         # 如需从私有 Git 仓库获取依赖，可在本地导出 GL_TOKEN 环境变量后构建
         GL_TOKEN: ${GL_TOKEN:-}
+    volumes:
+      # 挂载 zk 电路文件目录，构建时生成的电路文件会存储在这里
+      - zk_circuits:/app/node_modules/@reclaimprotocol/zk-symmetric-crypto/resources
+      # 挂载浏览器资源目录，用于存储构建后的 zk 文件
+      - zk_circuits:/app/browser/resources
     environment:
       - NODE_ENV=production
-      - LOG_LEVEL=info
+      - LOG_LEVEL=debug  # 增加日志级别用于调试
       - ATTESTOR_PORT=8001
       - DISABLE_BGP_CHECKS=1
       - PRIVATE_KEY=${PRIVATE_KEY:-0x0123788edad59d7c013cdc85e4372f350f828e2cec62d9a2de4560e69aec7f89}
+      # ZK 相关配置
+      - ZK_CONCURRENCY=1  # 降低并发避免内存问题
+      - CONNECTION_TIMEOUT_MS=120000  # 增加连接超时到2分钟
+      # Node.js 内存配置
+      - NODE_OPTIONS=--max-old-space-size=4096 --no-warnings
+    # 内存限制配置（如果 Docker Compose 版本支持）
+    mem_limit: 6g
+    memswap_limit: 6g
     ports:
       - "18001:8001"
     restart: unless-stopped
@@ -75,6 +88,8 @@ volumes:
   mitm_data:
     driver: local
   mainflow_data:
+    driver: local
+  zk_circuits:
     driver: local
 
 

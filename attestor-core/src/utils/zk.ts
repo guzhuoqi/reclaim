@@ -282,45 +282,77 @@ export async function makeZkProofGenerator(
 			toprf,
 		}: ZKProofToGenerate
 	): Promise<ZKProof> {
-		const operator = toprf
-			? getOprfOperatorForAlgorithm(algorithm)
-			: getZkOperatorForAlgorithm(algorithm)
-		const proof = await generateProof(
-			{
-				algorithm,
-				privateInput,
-				publicInput,
-				operator,
-				logger,
-				...(
-					toprf
-						? {
-							toprf: {
-								pos: toprf.dataLocation!.fromIndex,
-								len: toprf.dataLocation!.length,
-								output: toprf.nullifier,
-								responses: toprf.responses,
-								domainSeparator: TOPRF_DOMAIN_SEPARATOR
-							},
-							mask: toprf.mask,
-						}
-						: {}
-				)
+		const chunkStartTime = Date.now()
+		const chunkId = `${algorithm}-${startIdx}`
+
+		logger?.info({
+			chunkId,
+			algorithm,
+			startIdx,
+			plaintextLength: redactedPlaintext.length,
+			hasToprf: !!toprf
+		}, '🧮 开始生成 ZK 证明块')
+
+		try {
+			const operator = toprf
+				? getOprfOperatorForAlgorithm(algorithm)
+				: getZkOperatorForAlgorithm(algorithm)
+
+			logger?.info({ chunkId, operatorType: toprf ? 'OPRF' : 'ZK' }, '🔧 获取 operator 成功')
+
+			const proof = await generateProof(
+				{
+					algorithm,
+					privateInput,
+					publicInput,
+					operator,
+					logger,
+					...(
+						toprf
+							? {
+								toprf: {
+									pos: toprf.dataLocation!.fromIndex,
+									len: toprf.dataLocation!.length,
+									output: toprf.nullifier,
+									responses: toprf.responses,
+									domainSeparator: TOPRF_DOMAIN_SEPARATOR
+								},
+								mask: toprf.mask,
+							}
+							: {}
+					)
+				}
+			)
+
+			const chunkTime = Date.now() - chunkStartTime
+			logger?.info({
+				chunkId,
+				startIdx,
+				chunkTimeMs: chunkTime,
+				proofSize: proof.proofData?.length || 0
+			}, '✅ ZK 证明块生成完成')
+
+			return {
+				// backwards compatibility
+				proofJson: '',
+				proofData: typeof proof.proofData === 'string'
+					? strToUint8Array(proof.proofData)
+					: proof.proofData,
+				toprf,
+				decryptedRedactedCiphertext: proof.plaintext,
+				redactedPlaintext,
+				startIdx
 			}
-		)
-
-		logger?.debug({ startIdx }, 'generated proof for chunk')
-
-		return {
-			// backwards compatibility
-			proofJson: '',
-			proofData: typeof proof.proofData === 'string'
-				? strToUint8Array(proof.proofData)
-				: proof.proofData,
-			toprf,
-			decryptedRedactedCiphertext: proof.plaintext,
-			redactedPlaintext,
-			startIdx
+		} catch (error) {
+			const chunkTime = Date.now() - chunkStartTime
+			logger?.error({
+				chunkId,
+				startIdx,
+				chunkTimeMs: chunkTime,
+				error: error.message,
+				stack: error.stack
+			}, '❌ ZK 证明块生成失败')
+			throw error
 		}
 	}
 
@@ -535,28 +567,53 @@ export function makeDefaultZkOperator(
 	zkEngine: ZKEngine,
 	logger: Logger,
 ) {
+	const startTime = Date.now()
+	logger?.info({ algorithm, zkEngine }, '🔧 开始初始化 ZK operator')
+
 	let zkOperators = zkEngines[zkEngine]
 	if(!zkOperators) {
 		zkEngines[zkEngine] = {}
 		zkOperators = zkEngines[zkEngine]
+		logger?.info({ zkEngine }, '📦 创建新的 ZK engine 容器')
 	}
 
 	if(!zkOperators[algorithm]) {
 		const isNode = detectEnvironment() === 'node'
 		const opType = isNode ? 'local' : 'remote'
-		logger?.info({ type: opType, algorithm }, 'fetching zk operator')
+		logger?.info({ type: opType, algorithm, isNode }, '🔍 检测环境并获取 ZK operator')
 
-		const fetcher = opType === 'local'
-			? makeLocalFileFetch()
-			: makeRemoteFileFetch({
-				baseUrl: DEFAULT_REMOTE_FILE_FETCH_BASE_URL,
-			})
-		const maker = operatorMakers[zkEngine]
-		if(!maker) {
-			throw new Error(`No ZK operator maker for ${zkEngine}`)
+		try {
+			const fetcher = opType === 'local'
+				? makeLocalFileFetch()
+				: makeRemoteFileFetch({
+					baseUrl: DEFAULT_REMOTE_FILE_FETCH_BASE_URL,
+				})
+			logger?.info({ opType, baseUrl: opType === 'remote' ? DEFAULT_REMOTE_FILE_FETCH_BASE_URL : 'local' }, '📁 文件获取器创建成功')
+
+			const maker = operatorMakers[zkEngine]
+			if(!maker) {
+				logger?.error({ zkEngine, availableEngines: Object.keys(operatorMakers) }, '❌ 未找到 ZK operator maker')
+				throw new Error(`No ZK operator maker for ${zkEngine}`)
+			}
+
+			logger?.info({ zkEngine, algorithm }, '⚙️ 开始创建 ZK operator...')
+			zkOperators[algorithm] = maker({ algorithm, fetcher })
+
+			const initTime = Date.now() - startTime
+			logger?.info({ algorithm, zkEngine, initTimeMs: initTime }, '✅ ZK operator 初始化完成')
+		} catch (error) {
+			const initTime = Date.now() - startTime
+			logger?.error({
+				error: error.message,
+				algorithm,
+				zkEngine,
+				initTimeMs: initTime,
+				stack: error.stack
+			}, '❌ ZK operator 初始化失败')
+			throw error
 		}
-
-		zkOperators[algorithm] = maker({ algorithm, fetcher })
+	} else {
+		logger?.info({ algorithm, zkEngine }, '♻️ 复用已存在的 ZK operator')
 	}
 
 	return zkOperators[algorithm]

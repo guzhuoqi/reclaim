@@ -56,30 +56,64 @@ export class AttestorServerSocket extends AttestorSocket implements IAttestorSer
 		socket: WS,
 		{ req, logger, bgpListener }: AcceptNewConnectionOpts
 	) {
+		const connectionStartTime = Date.now()
+		const clientIP = req.socket.remoteAddress
+
 		// promisify ws.send -- so the sendMessage method correctly
 		// awaits the send operation
 		const bindSend = socket.send.bind(socket)
 		socket.send = promisify(bindSend)
 
 		const sessionId = generateSessionId()
-		logger = logger.child({ sessionId })
+		logger = logger.child({ sessionId, clientIP })
+
+		logger.info({ clientIP, sessionId }, '🔌 新的 WebSocket 连接请求')
 
 		const client = new AttestorServerSocket(
 			socket, sessionId, bgpListener, logger
 		)
+
+		// 添加连接状态监控
+		socket.on('close', (code, reason) => {
+			const connectionTime = Date.now() - connectionStartTime
+			logger.info({
+				sessionId,
+				clientIP,
+				code,
+				reason: reason?.toString(),
+				connectionTimeMs: connectionTime
+			}, '🔌 WebSocket 连接关闭')
+		})
+
+		socket.on('error', (error) => {
+			logger.error({
+				sessionId,
+				clientIP,
+				error: error.message,
+				stack: error.stack
+			}, '❌ WebSocket 连接错误')
+		})
+
 		try {
 			const initMsgs = getInitialMessagesFromQuery(req)
-			logger.trace(
-				{ initMsgs: initMsgs.length },
-				'new connection, validating...'
+			logger.info(
+				{ initMsgs: initMsgs.length, sessionId, clientIP },
+				'🔍 验证初始化消息...'
 			)
 			for(const msg of initMsgs) {
 				await handleMessage.call(client, msg)
 			}
 
-			logger.debug('connection accepted')
+			const initTime = Date.now() - connectionStartTime
+			logger.info({ sessionId, clientIP, initTimeMs: initTime }, '✅ WebSocket 连接已接受')
 		} catch(err) {
-			logger.error({ err }, 'error in new connection')
+			const initTime = Date.now() - connectionStartTime
+			logger.error({
+				err,
+				sessionId,
+				clientIP,
+				initTimeMs: initTime
+			}, '❌ WebSocket 连接初始化失败')
 			if(client.isOpen) {
 				await client.terminateConnection(
 					err instanceof AttestorError
