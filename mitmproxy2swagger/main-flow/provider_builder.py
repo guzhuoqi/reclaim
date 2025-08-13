@@ -716,7 +716,7 @@ class ReclaimProviderBuilder:
                 # 🎯 针对高价值API降低质量阈值，确保重要接口不被过滤
                 if api_data and api_data.get('value_score', 0) >= 100:
                     quality_threshold = 2.0  # 高价值API大幅降低阈值
-                    print(f"🎯 高价值API ({api_data.get('value_score')}分)，使用较低质量阈值: {quality_threshold}")
+                    print(f"🎯 高价值API ({api_data.get('value_score')}分)，使用较低质量阈值: {quality_threshold} [VERSION-FIX-20250813]")
                 else:
                     quality_threshold = 6.5  # 中等偏上
 
