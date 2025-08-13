@@ -713,7 +713,13 @@ class ReclaimProviderBuilder:
 
             # 🎯 质量过滤：仅保留中等偏上质量的匹配规则
             try:
-                quality_threshold = 6.5  # 中等偏上
+                # 🎯 针对高价值API降低质量阈值，确保重要接口不被过滤
+                if api_data and api_data.get('value_score', 0) >= 100:
+                    quality_threshold = 4.0  # 高价值API使用较低阈值
+                    print(f"🎯 高价值API ({api_data.get('value_score')}分)，使用较低质量阈值: {quality_threshold}")
+                else:
+                    quality_threshold = 6.5  # 中等偏上
+
                 filtered_matches = self._filter_response_matches_by_quality(
                     response_matches,
                     response_content,
@@ -723,7 +729,7 @@ class ReclaimProviderBuilder:
                 response_matches = filtered_matches
             except Exception as _e:
                 print(f"⚠️ 质量过滤异常（跳过）：{_e}")
-            
+
             # HSBC 定制化：对 hsbc.com.hk + /api/mmf- 端点，缩减为“最小稳定集”，其余有则加，无则不加
             try:
                 response_matches = self._refine_response_matches_for_hsbc(url, response_content, response_matches)
@@ -1197,13 +1203,20 @@ class ReclaimProviderBuilder:
         if quality_check.confidence_score < 0.6:  # 60%置信度阈值
             return None, quality_check
 
-        # 解析响应内容
+        # 解析响应内容 - 优先使用特征库分析结果中的响应数据
         response_content = ""
-        if flow_data['response_body']:
+        if api_data.get('response_data', {}).get('content'):
+            # 优先使用特征库分析结果中的响应内容
+            response_content = api_data['response_data']['content']
+            print(f"✅ 使用特征库分析结果中的响应数据: {len(response_content)} 字符")
+        elif flow_data['response_body']:
             try:
                 response_content = flow_data['response_body'].decode('utf-8', errors='ignore')
+                print(f"✅ 使用原始流数据中的响应内容: {len(response_content)} 字符")
             except:
                 response_content = ""
+        else:
+            print(f"⚠️  没有找到响应内容数据")
 
         # 🎯 提取响应模式 - 传入API数据以利用特征库匹配结果
         response_matches, response_redactions = self.extract_response_patterns(response_content, url, api_data)

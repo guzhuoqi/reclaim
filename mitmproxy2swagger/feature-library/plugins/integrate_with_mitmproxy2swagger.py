@@ -214,7 +214,15 @@ class MitmproxySwaggerIntegrator:
                         "matched_patterns": analysis_result.matched_patterns,
                         # 🎯 新增：API分类信息
                         "api_category": analysis_result.api_category,
-                        "provider_worthy": analysis_result.provider_worthy
+                        "provider_worthy": analysis_result.provider_worthy,
+                        # 🎯 新增：响应数据信息
+                        "response_data": {
+                            "status_code": flow_data.get('status_code'),
+                            "content_type": flow_data.get('response_headers', {}).get('content-type', ''),
+                            "content_length": len(response_body) if response_body else 0,
+                            "content": response_content[:1000] if response_content else '',  # 保存前1000字符用于分析
+                            "has_content": bool(response_content and len(response_content.strip()) > 0)
+                        }
                     }
 
                     results["extracted_data"].append(extracted_item)

@@ -221,9 +221,6 @@ class IntegratedMainPipeline:
         mitm_host = self.config['mitm_host']
         mitm_port = self.config['mitm_port']
 
-        # 智能跨容器访问：尝试多个主机地址
-        mitm_host = self._resolve_mitm_host(mitm_host, mitm_port)
-
         # 构建API URL，如果指定了大小限制，尝试通过查询参数间接控制
         base = f"http://{mitm_host}:{mitm_port}"
         base_url = f"{base}/flows/dump"
