@@ -27,6 +27,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 from urllib.parse import urljoin
+from pathlib import Path
 
 # 确保logs目录存在
 os.makedirs('logs', exist_ok=True)
@@ -69,6 +70,30 @@ class MainPipeline:
             if key not in self.config:
                 self.config[key] = value
         
+        # 与 provider_query 一致的 data 目录检测
+        def detect_data_dir() -> str:
+            env_dir = os.getenv('MAIN_FLOW_DATA_DIR')
+            if env_dir and os.path.exists(env_dir):
+                return os.path.abspath(env_dir)
+            container_dir = "/app/main-flow/data"
+            if os.path.exists(container_dir):
+                return container_dir
+            relative_dir = str((Path(__file__).resolve().parent.parent / "main-flow" / "data").resolve())
+            if os.path.exists(relative_dir):
+                return relative_dir
+            fallback = str((Path(__file__).resolve().parent / "data").resolve())
+            return fallback
+
+        if 'output_dir' not in self.config or self.config.get('output_dir') in ('data', './data'):
+            self.config['output_dir'] = detect_data_dir()
+
+        # 归一化目录为绝对路径
+        base_dir = Path(__file__).resolve().parent
+        for dir_key in ['output_dir', 'temp_dir']:
+            dir_path = self.config.get(dir_key)
+            if isinstance(dir_path, str) and not os.path.isabs(dir_path):
+                self.config[dir_key] = str((base_dir / dir_path).resolve())
+
         # 确保目录存在
         self.ensure_directories()
         
@@ -150,7 +175,10 @@ class MainPipeline:
         """
         if not output_file:
             timestamp = int(time.time())
-            output_file = os.path.join(self.config['temp_dir'], f"flows_export_{timestamp}.mitm")
+            # 与 Docker 卷挂载保持一致：默认导出到绝对的 output_dir (data)
+            output_file = os.path.join(self.config.get('output_dir', str((Path(__file__).resolve().parent / 'data').resolve())), f"flows_export_{timestamp}.mitm")
+        else:
+            output_file = os.path.abspath(output_file)
         
         mitm_host = self.config['mitm_host']
         mitm_port = self.config['mitm_port']
@@ -175,7 +203,7 @@ class MainPipeline:
                 file_size = os.path.getsize(output_file)
                 if file_size > 0:
                     print(f"✅ 成功导出流量数据: {file_size} bytes")
-                    self.pipeline_state['export_file'] = output_file
+                    self.pipeline_state['export_file'] = os.path.abspath(output_file)
                     self.pipeline_state['steps_completed'].append('export')
                     return output_file
                 else:

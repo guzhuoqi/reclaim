@@ -32,8 +32,8 @@ from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 from math import floor
 
-# 添加项目路径
-current_dir = Path(__file__).parent
+# 添加项目路径（使用绝对路径）
+current_dir = Path(__file__).resolve().parent
 sys.path.append(str(current_dir.parent / "feature-library" / "plugins"))
 
 # 确保logs和data目录存在
@@ -62,6 +62,24 @@ class IntegratedMainPipeline:
         """
         self.config = config or {}
 
+        # 加载config.json文件
+        config_file = Path(__file__).parent / 'config.json'
+        if config_file.exists():
+            try:
+                import json
+                with open(config_file, 'r') as f:
+                    file_config = json.load(f)
+                # 使用pipeline配置
+                if 'pipeline' in file_config:
+                    pipeline_config = file_config['pipeline']
+                    # 映射配置键名
+                    if 'default_mitm_host' in pipeline_config:
+                        self.config.setdefault('mitm_host', pipeline_config['default_mitm_host'])
+                    if 'default_mitm_port' in pipeline_config:
+                        self.config.setdefault('mitm_port', pipeline_config['default_mitm_port'])
+            except Exception as e:
+                logger.warning(f"加载配置文件失败: {e}")
+
         # 默认配置
         self.default_config = {
             'mitm_host': '127.0.0.1',
@@ -74,6 +92,32 @@ class IntegratedMainPipeline:
         for key, value in self.default_config.items():
             if key not in self.config:
                 self.config[key] = value
+
+        # 检测并设置数据目录（与 provider_query 的策略一致）
+        def detect_data_dir() -> str:
+            env_dir = os.getenv('MAIN_FLOW_DATA_DIR')
+            if env_dir and os.path.exists(env_dir):
+                return os.path.abspath(env_dir)
+            container_dir = "/app/main-flow/data"
+            if os.path.exists(container_dir):
+                return container_dir
+            relative_dir = str((current_dir.parent / "main-flow" / "data").resolve())
+            if os.path.exists(relative_dir):
+                return relative_dir
+            fallback = str((current_dir / "data").resolve())
+            return fallback
+
+        # 若未显式指定或为相对默认值，则采用检测到的绝对 data 目录
+        if 'output_dir' not in self.config or self.config.get('output_dir') in ('data', './data'):
+            self.config['output_dir'] = detect_data_dir()
+
+        # 归一化为绝对路径（与容器工作目录 /app/main-flow 对齐）
+        base_dir = Path(__file__).resolve().parent
+        for key in ["output_dir", "temp_dir"]:
+            dir_path = self.config.get(key)
+            if isinstance(dir_path, str) and not os.path.isabs(dir_path):
+                abs_path = (base_dir / dir_path).resolve()
+                self.config[key] = str(abs_path)
 
         # 确保目录存在
         self.ensure_directories()
@@ -169,11 +213,17 @@ class IntegratedMainPipeline:
         """
         if not output_file:
             date_str = datetime.now().strftime("%Y%m%d")
-            output_file = os.path.join(self.config['temp_dir'], f"flows_export_{date_str}.mitm")
+            # 默认导出到绝对的 output_dir
+            output_file = os.path.join(self.config['output_dir'], f"flows_export_{date_str}.mitm")
+        else:
+            output_file = os.path.abspath(output_file)
 
         mitm_host = self.config['mitm_host']
         mitm_port = self.config['mitm_port']
-        
+
+        # 智能跨容器访问：尝试多个主机地址
+        mitm_host = self._resolve_mitm_host(mitm_host, mitm_port)
+
         # 构建API URL，如果指定了大小限制，尝试通过查询参数间接控制
         base = f"http://{mitm_host}:{mitm_port}"
         base_url = f"{base}/flows/dump"
@@ -200,16 +250,35 @@ class IntegratedMainPipeline:
             except Exception:
                 csrf_token = None
 
-            # 使用curl命令导出，可选限制下载大小（携带 CSRF/Referer/XHR）
-            curl_cmd = ['curl', '-s', url, '-H', f'Referer: {base}/', '-H', 'X-Requested-With: XMLHttpRequest']
+            # 使用curl命令导出，添加跨容器访问支持
+            curl_cmd = ['curl', '-s', url, '-H', f'Referer: {base}/', '-H', 'X-Requested-With: XMLHttpRequest', '--connect-timeout', '30', '--max-time', '600']
             if csrf_token:
                 curl_cmd.extend(['-H', f'X-CSRFToken: {csrf_token}', '-b', f'csrftoken={csrf_token}'])
             if max_download_bytes:
                 curl_cmd.extend(['--max-filesize', str(max_download_bytes)])
                 print(f"   限制下载大小: {max_download_bytes} bytes ({max_download_bytes / 1024 / 1024:.1f}MB)")
 
-            with open(output_file, 'wb') as f:
-                result = subprocess.run(curl_cmd, stdout=f, stderr=subprocess.PIPE)
+            # 尝试使用Python requests进行更可靠的下载
+            try:
+                import requests
+                print(f"   使用Python requests下载...")
+                response = requests.get(url, timeout=600, stream=True)
+                if response.status_code == 200:
+                    total_bytes = 0
+                    with open(output_file, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=65536):
+                            if chunk:
+                                f.write(chunk)
+                                total_bytes += len(chunk)
+                    print(f"   Python requests下载完成: {total_bytes} bytes")
+                    result = type('Result', (), {'returncode': 0, 'stderr': b''})()
+                else:
+                    print(f"   Python requests失败，状态码: {response.status_code}")
+                    raise Exception(f"HTTP {response.status_code}")
+            except Exception as e:
+                print(f"   Python requests失败: {e}，回退到curl")
+                with open(output_file, 'wb') as f:
+                    result = subprocess.run(curl_cmd, stdout=f, stderr=subprocess.PIPE)
 
             if result.returncode == 0:
                 file_size = os.path.getsize(output_file)
@@ -217,20 +286,21 @@ class IntegratedMainPipeline:
                     print(f"✅ 成功导出流量数据: {file_size} bytes")
                     logger.info(f"流量数据导出成功: {output_file}, {file_size} bytes")
 
-                    # 若文件超过5MB，按规则裁剪
-                    MAX_SIZE = 5 * 1024 * 1024
-                    if file_size > MAX_SIZE:
-                        print("⚠️  导出文件大于5MB，开始按规则裁剪（最近30分钟，且最终不超过5MB）...")
-                        trimmed_file = self._trim_mitm_file(output_file, max_size_bytes=MAX_SIZE, window_minutes=30)
-                        if trimmed_file and os.path.exists(trimmed_file):
-                            output_file = trimmed_file
-                            file_size = os.path.getsize(output_file)
-                            print(f"✅ 裁剪完成: {file_size} bytes -> {output_file}")
-                            logger.info(f"流量数据已裁剪至<=5MB: {output_file}, {file_size} bytes")
-                        else:
-                            print("⚠️  裁剪失败或无可用数据，继续使用原始导出文件")
+                    # 裁剪功能默认关闭；如需开启，请在配置中设置 enable_trim=True
+                    if self.config.get('enable_trim', False):
+                        MAX_SIZE = 5 * 1024 * 1024
+                        if file_size > MAX_SIZE:
+                            print("⚠️  导出文件大于5MB，开始按规则裁剪（最近30分钟，且最终不超过5MB）...")
+                            trimmed_file = self._trim_mitm_file(output_file, max_size_bytes=MAX_SIZE, window_minutes=30)
+                            if trimmed_file and os.path.exists(trimmed_file):
+                                output_file = trimmed_file
+                                file_size = os.path.getsize(output_file)
+                                print(f"✅ 裁剪完成: {file_size} bytes -> {output_file}")
+                                logger.info(f"流量数据已裁剪至<=5MB: {output_file}, {file_size} bytes")
+                            else:
+                                print("⚠️  裁剪失败或无可用数据，继续使用原始导出文件")
 
-                    self.pipeline_state['export_file'] = output_file
+                    self.pipeline_state['export_file'] = os.path.abspath(output_file)
                     self.pipeline_state['steps_completed'].append('export')
                     return output_file
                 else:
@@ -247,7 +317,7 @@ class IntegratedMainPipeline:
                         file_size = os.path.getsize(output_file)
                         print(f"✅ 已下载部分数据: {file_size} bytes，继续使用")
                         logger.info(f"部分下载完成: {output_file}, {file_size} bytes")
-                        self.pipeline_state['export_file'] = output_file
+                        self.pipeline_state['export_file'] = os.path.abspath(output_file)
                         self.pipeline_state['steps_completed'].append('export')
                         return output_file
                     else:
@@ -331,7 +401,11 @@ class IntegratedMainPipeline:
 
             # 写入最终文件（按时间升序写入更贴近原始顺序）
             final_flows = list(reversed(selected))
-            out_path = os.path.join(temp_dir, f"flows_recent_{timestamp}.mitm")
+            # 使用绝对路径：裁剪后的最终文件写到与输入文件相同的目录
+            input_file = os.path.abspath(input_file)
+            out_dir = os.path.dirname(input_file) or self.config.get('output_dir', '.')
+            os.makedirs(out_dir, exist_ok=True)
+            out_path = os.path.join(out_dir, f"flows_recent_{timestamp}.mitm")
             with open(out_path, 'wb') as wf:
                 writer = mitm_io.FlowWriter(wf)
                 for flow in final_flows:
@@ -865,7 +939,7 @@ class IntegratedMainPipeline:
                     "report": self.generate_pipeline_report()
                 }
 
-            mitm_file = input_file
+            mitm_file = os.path.abspath(input_file)
             print(f"📄 离线模式，使用输入文件: {mitm_file}")
             self.pipeline_state['export_file'] = mitm_file
             self.pipeline_state['steps_completed'].append('export')

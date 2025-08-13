@@ -186,16 +186,34 @@ def main():
     print()
 
     # 查找所有mitm文件
-    current_dir = Path(__file__).parent
+    current_dir = Path(__file__).resolve().parent
     mitm_files = []
 
-    # 在temp目录中查找
-    temp_dir = current_dir / 'temp'
+    # 与 provider_query 一致的数据目录检测
+    def detect_data_dir() -> Path:
+        env_dir = os.getenv('MAIN_FLOW_DATA_DIR')
+        if env_dir and os.path.exists(env_dir):
+            return Path(env_dir).resolve()
+        container_dir = Path('/app/main-flow/data')
+        if container_dir.exists():
+            return container_dir
+        relative_dir = (current_dir.parent / 'main-flow' / 'data')
+        if relative_dir.exists():
+            return relative_dir.resolve()
+        return (current_dir / 'data').resolve()
+
+    # 优先在 data 目录中查找（与 Docker 卷挂载一致）
+    data_dir = detect_data_dir()
+    if data_dir.exists():
+        mitm_files.extend(data_dir.glob('*.mitm'))
+
+    # 兼容：在 temp 目录中查找
+    temp_dir = (current_dir / 'temp').resolve()
     if temp_dir.exists():
         mitm_files.extend(temp_dir.glob('*.mitm'))
 
-    # 在testdata目录中查找
-    testdata_dir = current_dir.parent / 'testdata'
+    # 兼容：在 testdata 目录中查找
+    testdata_dir = (current_dir.parent / 'testdata').resolve()
     if testdata_dir.exists():
         mitm_files.extend(testdata_dir.glob('*.mitm'))
 
