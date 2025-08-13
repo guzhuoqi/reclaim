@@ -18,7 +18,7 @@
     "zkme_base_url": "http://localhost:3000",
     "use_wss_attestor": false,
     "wss_attestor_url": "ws://attestor:8001/ws",
-    "attestor_host_port": "attestor:8001",
+    "attestor_host_port": "attestor-core:8001",
     "wss_headers": {},
     "wss_origin": "https://devint-reclaim0.mechain.tech",
     "wss_ssl_insecure": true,
