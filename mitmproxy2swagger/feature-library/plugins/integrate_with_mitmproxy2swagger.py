@@ -220,7 +220,7 @@ class MitmproxySwaggerIntegrator:
                             "status_code": flow_data.get('status_code'),
                             "content_type": flow_data.get('response_headers', {}).get('content-type', ''),
                             "content_length": len(response_body) if response_body else 0,
-                            "content": response_content[:1000] if response_content else '',  # 保存前1000字符用于分析
+                            "content": response_content[:30000] if response_content else '',  # 保存前30000字符用于分析
                             "has_content": bool(response_content and len(response_content.strip()) > 0)
                         }
                     }

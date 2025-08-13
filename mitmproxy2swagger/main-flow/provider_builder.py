@@ -715,7 +715,7 @@ class ReclaimProviderBuilder:
             try:
                 # 🎯 针对高价值API降低质量阈值，确保重要接口不被过滤
                 if api_data and api_data.get('value_score', 0) >= 100:
-                    quality_threshold = 4.0  # 高价值API使用较低阈值
+                    quality_threshold = 2.0  # 高价值API大幅降低阈值
                     print(f"🎯 高价值API ({api_data.get('value_score')}分)，使用较低质量阈值: {quality_threshold}")
                 else:
                     quality_threshold = 6.5  # 中等偏上
@@ -3327,6 +3327,42 @@ if (document.readyState === 'loading') {{
                 reasons[field] = reasons.get(field, 0) + 1
 
         return reasons
+
+    def build_providers(self) -> Dict[str, Any]:
+        """构建所有API的provider配置 - 包装方法，返回字典格式结果
+
+        Returns:
+            Dict[str, Any]: 包含成功状态、文件路径等信息的字典
+        """
+        try:
+            # 调用核心构建方法
+            successful_providers, questionable_apis = self.build_all_providers()
+
+            # 保存结果
+            providers_file, questionable_file = self.save_results(
+                successful_providers,
+                questionable_apis,
+                output_dir=os.path.dirname(self.analysis_result_file) if self.analysis_result_file else "data"
+            )
+
+            return {
+                'success': True,
+                'providers_count': len(successful_providers),
+                'questionable_count': len(questionable_apis),
+                'providers_file': providers_file,
+                'questionable_file': questionable_file,
+                'message': f'成功构建 {len(successful_providers)} 个Provider，{len(questionable_apis)} 个存疑API'
+            }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'providers_count': 0,
+                'questionable_count': 0,
+                'providers_file': None,
+                'questionable_file': None,
+                'message': f'Provider构建失败: {str(e)}'
+            }
 
     @staticmethod
     def load_providers_by_date(date_str: str, data_dir: str = "data") -> Optional[Dict]:
