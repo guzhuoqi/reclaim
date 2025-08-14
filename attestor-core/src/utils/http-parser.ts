@@ -175,10 +175,18 @@ export function makeHttpResponseParser() {
          * Checks that the response is valid & complete, otherwise throws an error
          */
 		streamEnded() {
-			// 🏦 DEBUG: 精简的流状态分析
+			// 🏦 DEBUG: 详细的流状态分析
 			console.log(`📥 流结束: headers=${res.headersComplete}, 数据=${remaining.length}字节, status=${res.statusCode || 'NONE'}`)
-			
+
 			if(!res.headersComplete) {
+				// 🔍 DEBUG: 打印实际收到的原始数据
+				console.log('🔍 DEBUG: 原始数据分析')
+				console.log(`   数据长度: ${remaining.length}字节`)
+				if (remaining.length > 0) {
+					console.log(`   数据内容(hex): ${Array.from(remaining.slice(0, Math.min(100, remaining.length))).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+					console.log(`   数据内容(text): ${new TextDecoder('utf-8', {fatal: false}).decode(remaining.slice(0, Math.min(100, remaining.length)))}`)
+					console.log(`   是否包含HTTP: ${new TextDecoder('utf-8', {fatal: false}).decode(remaining).includes('HTTP')}`)
+				}
 				throw new Error('stream ended before headers were complete')
 			}
 

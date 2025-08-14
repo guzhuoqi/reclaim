@@ -55,6 +55,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 				...defaultOptions,
 				...getBankCompatibleTlsOptions()
 			}
+			console.log(`🏦 应用银行兼容TLS配置 - CMB永隆`)
 		}
 
 		if('additionalClientOptions' in params) {
@@ -66,6 +67,8 @@ const HTTP_PROVIDER: Provider<'http'> = {
 
 		return defaultOptions
 	},
+
+
 	createRequest(secretParams, params, logger) {
 		if(
 			!secretParams.cookieStr &&
@@ -143,6 +146,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		const hasAcceptEncoding = [...Object.keys(pubHeaders), ...Object.keys(secHeaders)]
 			.some(k => k.toLowerCase() === 'accept-encoding')
 		if (!hasAcceptEncoding) {
+			// 🏦 银行兼容性：招商永隆银行使用完整的压缩格式，其他以传入参数为准
 			coreHeaders.push(isCMBWingLungBank ? 'Accept-Encoding: gzip, deflate, br, zstd' : 'Accept-Encoding: identity')
 		}
 
@@ -385,7 +389,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		}
 
 		const connectionHeader = req.headers['connection']
-		// 🏦 银行兼容性：允许keep-alive连接
+		// 🏦 银行兼容性：招商永隆银行允许keep-alive连接，其他以传入参数为准
 		const isCMBWingLungBankRequest = params.url.includes('cmbwinglungbank.com')
 		const allowedConnections = isCMBWingLungBankRequest ? ['close', 'keep-alive'] : ['close']
 
@@ -966,6 +970,8 @@ function getURL(v2Params: HTTPProviderParams, secretParams: ProviderSecretParams
 
 	return hostPort
 }
+
+
 
 
 export default HTTP_PROVIDER

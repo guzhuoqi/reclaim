@@ -349,11 +349,23 @@ class AttestorExecutor:
             secret_params_json = json.dumps(attestor_params.get("secretParams", {}))
 
             # 🔍 调试：打印实际传递的参数
-            print(f"🔍 调试 - 传递给attestor的参数:")
-            print(f"   params: {params_json[:200]}...")
-            print(f"   secretParams: {secret_params_json}")
+            print(f"🔍 调试 - 传递给attestor的完整参数:")
+            print(f"   任务ID: {task_id}")
             print(f"   脚本路径: {attestor_script}")
             print(f"   脚本存在: {os.path.exists(attestor_script)}")
+            print(f"   params (完整): {params_json}")
+            print(f"   secretParams (完整): {secret_params_json}")
+
+            # 解析并分析secretParams内容
+            try:
+                secret_params_obj = json.loads(secret_params_json)
+                print(f"   secretParams keys: {list(secret_params_obj.keys())}")
+                if 'headers' in secret_params_obj:
+                    print(f"   ❌ 警告: secretParams中仍包含headers字段: {secret_params_obj['headers']}")
+                else:
+                    print(f"   ✅ secretParams中不包含headers字段，符合预期")
+            except:
+                print(f"   ❌ secretParams JSON解析失败")
 
             # 使用 shell 重定向将调试输出重定向到 /dev/null
             import shlex

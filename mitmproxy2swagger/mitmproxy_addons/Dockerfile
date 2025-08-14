@@ -32,6 +32,15 @@ RUN if [ "$SKIP_ATTESTOR_BUILD" != "true" ]; then \
       else \
         echo "🔧 Building attestor-core from source" && npm run build ; \
       fi && \
+      echo "🔍 检查ZK文件状态..." && \
+      if [ -f "node_modules/@reclaimprotocol/zk-symmetric-crypto/resources/snarkjs/aes-256-ctr/circuit.wasm" ]; then \
+        echo "✅ 检测到预拷贝的ZK文件，跳过下载" && \
+        echo "📊 现有ZK文件数量: $(find node_modules/@reclaimprotocol/zk-symmetric-crypto/resources -type f 2>/dev/null | wc -l)"; \
+      else \
+        echo "📥 未检测到ZK文件，执行下载..." && \
+        npm run download:zk-files && \
+        echo "📊 ZK文件下载完成，文件数量: $(find node_modules/@reclaimprotocol/zk-symmetric-crypto/resources -type f 2>/dev/null | wc -l)"; \
+      fi && \
       npm prune --omit=dev ; \
     else \
       echo "⏭️  Skip attestor-core build (will rely on runtime volume)" ; \

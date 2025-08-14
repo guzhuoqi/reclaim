@@ -152,7 +152,7 @@ class SessionBasedMatcher:
         has_auth = False
         try:
             sp = attestor_params.get('secretParams') or {}
-            has_auth = bool(sp.get('cookieStr') or sp.get('authorisationHeader') or sp.get('headers'))
+            has_auth = bool(sp.get('cookieStr') or sp.get('authorisationHeader'))
         except Exception:
             has_auth = False
 
@@ -237,8 +237,7 @@ class SessionBasedMatcher:
         # 构建secretParams - 按照attestor-core的期望格式
         secret_params = {}
 
-        # 特殊处理Cookie和Authorization，其余敏感头归入 secretParams.headers
-        other_secret_headers = {}
+        # 只处理Cookie和Authorization，其他所有headers都保留在params.headers中
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
             if key_lower == 'cookie':
@@ -246,10 +245,8 @@ class SessionBasedMatcher:
             elif key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
             else:
-                other_secret_headers[key] = value
-
-        if other_secret_headers:
-            secret_params['headers'] = other_secret_headers
+                # 其他所有headers都移回params.headers，包括token_type等
+                params['headers'][key] = value
 
         # 构建attestor_params的正确结构 - 🎯 添加必要的顶层字段
         attestor_params = {

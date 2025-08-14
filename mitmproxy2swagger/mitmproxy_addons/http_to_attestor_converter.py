@@ -38,6 +38,12 @@ class HttpToAttestorConverter:
             "transaction_amount": {
                 "pattern": r"金额[^\\d]*(\\d[\\d,]*\\.\\d{2})",
                 "description": "交易金额匹配"
+            },
+            # HSBC HK - accounts/domestic JSON 响应中的 ledgerBalance(HKD) 金额提取
+            "hsbc_accounts_domestic_balance": {
+                # 粗略匹配 JSON 文本中的 HKD 余额数字，兼容空白/换行
+                "pattern": r"\"ledgerBalance\"\s*:\s*\{[^}]*\"currency\"\s*:\s*\"HKD\"[^}]*\"amount\"\s*:\s*(\d+(?:\.\d+)?)",
+                "description": "HSBC HK accounts/domestic 响应中的 HKD ledgerBalance"
             }
         }
 
@@ -45,11 +51,25 @@ class HttpToAttestorConverter:
         # - 精确名：保留最关键的两个，单独映射到 cookieStr / authorisationHeader
         # - 关键词：采用“部分匹配”（contains），覆盖更多供应商私有头
         self.sensitive_exact_headers = {'cookie', 'authorization'}
+        # 明确的非敏感白名单（即使名称包含敏感关键词，也保留在 params.headers）
+        self.nonsensitive_header_allowlist = {
+            'token_type',           # 这是请求类型标识，不是认证信息
+            'content-type',         # 内容类型
+            'accept',              # 接受类型
+            'user-agent',          # 用户代理
+            'referer',             # 引用页面
+            'origin',              # 来源
+            'host'                 # 主机名
+        }
+        # 敏感关键词 - 只匹配真正的认证相关headers
         self.sensitive_name_keywords = [
-            # 用户指明的关键变体
-            'x-bridge-token', 'x-access-token', 'x-session-id', 'x-csrf-token', 'x-xsrf-token', 'x-authorization', 'x-api-key',
-            # 通用关键词（部分匹配）
-            'token', 'auth', 'session', 'csrf', 'xsrf', 'api-key', 'bridge', 'credential'
+            # 会话相关
+            'session', 'sessionid', 'jsessionid',
+            # 认证令牌相关
+            'x-access-token', 'x-auth-token', 'x-session-token',
+            'x-csrf-token', 'x-xsrf-token', 'x-api-key',
+            # 银行特定认证headers
+            'x-bridge-token', 'dxp-pep-token', 'aws-waf-token'
         ]
 
         # 基础headers，保留在params中
@@ -107,22 +127,25 @@ class HttpToAttestorConverter:
         if response_redactions:
             params["responseRedactions"] = response_redactions
 
+        # 🔧 根据环境变量和银行URL添加TLS配置
+        additional_client_options = self._build_additional_client_options(params["url"])
+        if additional_client_options:
+            params["additionalClientOptions"] = additional_client_options
+
         # 构建secretParams - 按照attestor-core的期望格式
         secret_params: Dict[str, Any] = {}
 
-        # 特殊处理Cookie和Authorization；其余敏感头统一放到 secretParams.headers
-        secret_headers: Dict[str, str] = {}
+        # 只处理Cookie和Authorization，其他所有headers都保留在params.headers中
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
             if key_lower == 'cookie':
+                # 确保Cookie值被正确处理，保持原始格式
                 secret_params['cookieStr'] = value
             elif key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
             else:
-                secret_headers[key] = value
-
-        if secret_headers:
-            secret_params['headers'] = secret_headers
+                # 其他所有headers都移回params.headers，包括token_type等
+                params['headers'][key] = value
 
         # 构建最终结果
         result = {
@@ -132,6 +155,47 @@ class HttpToAttestorConverter:
         }
 
         return result
+
+    def _build_additional_client_options(self, url: str) -> Dict[str, Any]:
+        """
+        🔧 根据环境变量和银行URL构建additionalClientOptions
+
+        Args:
+            url: 请求URL
+
+        Returns:
+            additionalClientOptions配置字典，如果不需要特殊配置则返回空字典
+        """
+        import os
+
+        # 🏦 银行检测
+        is_hsbc_bank = 'hsbc' in url.lower()  # 支持hsbc.com, hsbc.edge.sdk.awswaf.com等
+        is_cmb_wing_lung_bank = 'cmbwinglungbank.com' in url.lower()
+
+        # 🔧 环境变量配置
+        hsbc_http_version = os.environ.get('HSBC_HTTP_VERSION', 'http1.1')
+        cmb_http_version = os.environ.get('CMB_HTTP_VERSION', 'auto')
+        default_http_version = os.environ.get('DEFAULT_HTTP_VERSION', 'auto')
+
+        additional_options = {}
+
+        if is_hsbc_bank:
+            print(f"🏦 HSBC汇丰银行 - 环境变量配置: HSBC_HTTP_VERSION={hsbc_http_version}")
+            if hsbc_http_version.lower() in ['http1.1', 'http/1.1']:
+                additional_options['applicationLayerProtocols'] = ['http/1.1']
+                print(f"🔧 强制使用HTTP/1.1协议")
+        elif is_cmb_wing_lung_bank:
+            print(f"🏦 CMB永隆银行 - 环境变量配置: CMB_HTTP_VERSION={cmb_http_version}")
+            if cmb_http_version.lower() in ['http1.1', 'http/1.1']:
+                additional_options['applicationLayerProtocols'] = ['http/1.1']
+                print(f"🔧 强制使用HTTP/1.1协议")
+        else:
+            print(f"🌐 其他银行 - 环境变量配置: DEFAULT_HTTP_VERSION={default_http_version}")
+            if default_http_version.lower() in ['http1.1', 'http/1.1']:
+                additional_options['applicationLayerProtocols'] = ['http/1.1']
+                print(f"🔧 强制使用HTTP/1.1协议")
+
+        return additional_options
 
     def _split_headers(self, headers: Dict[str, str]) -> Tuple[Dict[str, str], Dict[str, str]]:
         """
@@ -146,24 +210,56 @@ class HttpToAttestorConverter:
         basic_headers: Dict[str, str] = {}
         sensitive_headers: Dict[str, str] = {}
 
-        def _is_sensitive_header(name: str, value: str) -> bool:
-            nl = (name or '').lower()
-            # 精确命中
-            if nl in self.sensitive_exact_headers:
-                return True
-            # 名称关键词部分匹配
-            for kw in self.sensitive_name_keywords:
-                if kw in nl:
-                    return True
-            return False
-
+        # 现在只需要识别Cookie和Authorization，其他所有headers都保留在basic_headers中
         for key, value in headers.items():
-            if _is_sensitive_header(key, value):
+            key_lower = key.lower()
+            if key_lower in {'cookie', 'authorization'}:
                 sensitive_headers[key] = value
             else:
                 basic_headers[key] = value
 
         return basic_headers, sensitive_headers
+
+    def _is_authentication_header(self, header_name: str) -> bool:
+        """
+        判断header是否为真正的认证相关header
+
+        Args:
+            header_name: header名称
+
+        Returns:
+            是否为认证header
+        """
+        name_lower = header_name.lower()
+
+        # 明确的认证headers
+        auth_headers = {
+            'dxp-pep-token',        # 银行JWT令牌
+            'aws-waf-token',        # AWS WAF令牌
+            'x-bridge-token',       # 桥接令牌
+            'x-access-token',       # 访问令牌
+            'x-auth-token',         # 认证令牌
+            'x-session-token',      # 会话令牌
+            'x-csrf-token',         # CSRF令牌
+            'x-xsrf-token',         # XSRF令牌
+            'x-api-key',           # API密钥
+        }
+
+        # 会话相关headers
+        session_headers = {
+            'jsessionid',
+            'sessionid',
+        }
+
+        # 精确匹配
+        if name_lower in auth_headers or name_lower in session_headers:
+            return True
+
+        # 包含session关键词的headers
+        if 'session' in name_lower and name_lower not in {'session-idle-hint', 'session-expiry-hint'}:
+            return True
+
+        return False
 
     def _build_response_rules(
         self,
@@ -224,7 +320,9 @@ class HttpToAttestorConverter:
         body: str = "",
         geo_location: str = "HK",
         response_patterns: Optional[List[str]] = None,
-        custom_patterns: Optional[Dict[str, str]] = None
+        custom_patterns: Optional[Dict[str, str]] = None,
+        normalize_headers: bool = True,
+        explicit_host: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         直接从原始请求数据转换为attestor参数格式
@@ -255,8 +353,19 @@ class HttpToAttestorConverter:
             "headers": basic_headers
         }
 
-        # 强制满足 attestor-http provider 的要求：Connection 必须为 close
-        self._enforce_attestor_header_requirements(params["headers"], params["body"])
+        # 确保 Host 头与 URL 主机一致（或使用显示指定的 Host）
+        try:
+            parsed = urlparse(url)
+            desired_host = explicit_host or parsed.netloc.split(':')[0]
+            # 仅当未设置 Host 时注入；如需强制覆盖，可通过 explicit_host 设置
+            if not any(k.lower() == 'host' for k in params["headers"].keys()):
+                params["headers"]["Host"] = desired_host
+        except Exception:
+            pass
+
+        # 强制满足 attestor-http provider 的要求（可禁用）
+        if normalize_headers:
+            self._enforce_attestor_header_requirements(params["headers"], params["body"])
 
         # 添加响应匹配规则
         response_matches, response_redactions = self._build_response_rules(
@@ -267,21 +376,25 @@ class HttpToAttestorConverter:
         if response_redactions:
             params["responseRedactions"] = response_redactions
 
+        # 🔧 根据环境变量和银行URL添加TLS配置
+        additional_client_options = self._build_additional_client_options(params["url"])
+        if additional_client_options:
+            params["additionalClientOptions"] = additional_client_options
+
         # 构建secretParams - 按照attestor-core的期望格式
         secret_params: Dict[str, Any] = {}
 
-        secret_headers: Dict[str, str] = {}
+        # 只处理Cookie和Authorization，其他所有headers都保留在params.headers中
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
             if key_lower == 'cookie':
+                # 确保Cookie值被正确处理，保持原始格式
                 secret_params['cookieStr'] = value
             elif key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
             else:
-                secret_headers[key] = value
-
-        if secret_headers:
-            secret_params['headers'] = secret_headers
+                # 其他所有headers都移回params.headers，包括token_type等
+                params['headers'][key] = value
 
         # 构建最终结果
         result = {
@@ -291,6 +404,32 @@ class HttpToAttestorConverter:
         }
 
         return result
+
+    def convert_request_params_json_to_attestor_params(
+        self,
+        request_params: Dict[str, Any],
+        geo_location: str = "HK",
+        response_patterns: Optional[List[str]] = None,
+        custom_patterns: Optional[Dict[str, str]] = None,
+        normalize_headers: bool = True,
+        explicit_host: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """从类似 hsbc_accounts_domestic_request_params.json 的结构转换为 attestor 参数"""
+        url = request_params.get("full_url") or request_params.get("url")
+        method = request_params.get("method", "GET")
+        headers = request_params.get("headers", {})
+        body = ""
+        return self.convert_raw_request_to_attestor_params(
+            url=url,
+            method=method,
+            headers=headers,
+            body=body,
+            geo_location=geo_location,
+            response_patterns=response_patterns,
+            custom_patterns=custom_patterns,
+            normalize_headers=normalize_headers,
+            explicit_host=explicit_host,
+        )
 
     def _enforce_attestor_header_requirements(self, headers: Dict[str, str], body: str) -> None:
         """
@@ -469,4 +608,36 @@ def demo_usage():
 
 
 if __name__ == "__main__":
+    import argparse, sys, json
+    parser = argparse.ArgumentParser(description="HTTP→Attestor 参数转换器")
+    parser.add_argument("--from-request-json", dest="from_request_json", default=None, help="从请求参数JSON文件读取（如 hsbc_accounts_domestic_request_params.json）")
+    parser.add_argument("--geo", dest="geo", default="HK", help="geoLocation，默认 HK")
+    parser.add_argument("--no-normalize", dest="no_normalize", action="store_true", help="不强制规范化为 attestor http provider 头部要求")
+    parser.add_argument("--patterns", dest="patterns", default="hsbc_accounts_domestic_balance", help="逗号分隔的内置响应匹配模式名称")
+    parser.add_argument("--print-command", dest="print_command", action="store_true", help="打印可执行的 attestor 命令行")
+    parser.add_argument("--host", dest="host", default=None, help="显式设置 Host 头，默认与 URL 主机一致")
+    args = parser.parse_args()
+
+    conv = HttpToAttestorConverter()
+    normalize = not args.no_normalize
+    patterns = [p.strip() for p in (args.patterns or '').split(',') if p.strip()]
+
+    if args.from_request_json:
+        with open(args.from_request_json, 'r', encoding='utf-8') as f:
+            req = json.load(f)
+        attestor_params = conv.convert_request_params_json_to_attestor_params(
+            request_params=req,
+            geo_location=args.geo,
+            response_patterns=patterns or None,
+            normalize_headers=normalize,
+            explicit_host=args.host,
+        )
+        print(json.dumps(attestor_params, indent=2, ensure_ascii=False))
+        if args.print_command:
+            cmd = conv.generate_command_line(attestor_params)
+            print("\nCommand:")
+            print(cmd)
+        sys.exit(0)
+
+    # fallback to demo
     demo_usage()

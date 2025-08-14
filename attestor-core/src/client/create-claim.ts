@@ -138,6 +138,12 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		)
 		: undefined
 
+	// 🔗 TLS连接日志增强
+	console.log(`🔗 开始建立TLS连接`)
+	console.log(`📍 目标: ${createTunnelReq.host}:${createTunnelReq.port}`)
+	console.log(`🌍 地理位置: ${createTunnelReq.geoLocation || '无'}`)
+	console.log(`🔧 TLS选项:`, JSON.stringify(tlsOpts, null, 2))
+
 	const tunnel = await makeRpcTlsTunnel({
 		tlsOpts,
 		connect: (connectMsgs) => {
@@ -199,8 +205,17 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 
 	const {
 		version: tlsVersion,
-		cipherSuite
+		cipherSuite,
+		selectedAlpn
 	} = tunnel.tls.getMetadata()
+
+	// 🔗 TLS连接成功日志
+	console.log(`✅ TLS连接建立成功`)
+	console.log(`🔐 TLS版本: ${tlsVersion}`)
+	console.log(`🔒 密码套件: ${cipherSuite}`)
+	console.log(`🌐 协商的ALPN: ${selectedAlpn || '无'}`)
+	console.log(`📊 传输记录数: ${tunnel.transcript.length}条`)
+
 	if(tlsVersion === 'TLS1_2' && redactionMode !== 'zk') {
 		redactionMode = 'zk'
 		logger.info('TLS1.2 detected, defaulting to zk redaction mode')

@@ -19,6 +19,8 @@ RUN npm ci --include=optional
 COPY ./ /app
 
 RUN npm run build
+
+# 🚀 使用智能ZK文件下载器：避免不必要的删除和重新下载
 RUN npm run download:zk-files
 
 # 检查 ZK 文件下载情况

@@ -49,6 +49,14 @@ export const makeRpcTlsTunnel: MakeTunnelFn<ExtraTLSOptions, TLSTunnelProperties
 		...tlsOpts,
 		logger,
 		onHandshake() {
+			// 🔗 TLS握手完成后打印详细信息
+			const metadata = tls.getMetadata()
+			console.log(`🤝 TLS握手完成`)
+			console.log(`🔐 协商的TLS版本: ${metadata.version}`)
+			console.log(`🔒 协商的密码套件: ${metadata.cipherSuite}`)
+			console.log(`🌐 服务端选择的ALPN: ${metadata.selectedAlpn || '无'}`)
+			console.log(`📋 客户端请求的ALPN: [${tlsOpts?.applicationLayerProtocols?.join(', ') || '无'}]`)
+
 			handshakeResolve?.()
 		},
 		onApplicationData(plaintext) {
