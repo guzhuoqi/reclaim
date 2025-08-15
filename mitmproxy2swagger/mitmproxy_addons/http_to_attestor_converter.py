@@ -139,8 +139,11 @@ class HttpToAttestorConverter:
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
             if key_lower == 'cookie':
-                # 确保Cookie值被正确处理，保持原始格式
-                secret_params['cookieStr'] = value
+                # 🔧 修复：对cookie进行URL编码，避免JSON转义问题
+                import urllib.parse
+                encoded_cookie = urllib.parse.quote(value, safe='=;, ')
+                secret_params['cookieStr'] = encoded_cookie
+                print(f"🔧 Cookie URL编码: {len(value)} -> {len(encoded_cookie)} 字符")
             elif key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
             else:
@@ -181,21 +184,59 @@ class HttpToAttestorConverter:
 
         if is_hsbc_bank:
             print(f"🏦 HSBC汇丰银行 - 环境变量配置: HSBC_HTTP_VERSION={hsbc_http_version}")
-            if hsbc_http_version.lower() in ['http1.1', 'http/1.1']:
-                additional_options['applicationLayerProtocols'] = ['http/1.1']
-                print(f"🔧 强制使用HTTP/1.1协议")
+            protocols = self._parse_http_version_to_protocols(hsbc_http_version)
+            if protocols:
+                additional_options['applicationLayerProtocols'] = protocols
+                print(f"🔧 使用协议: {protocols}")
+            else:
+                print(f"🔧 自动协商HTTP协议版本")
         elif is_cmb_wing_lung_bank:
             print(f"🏦 CMB永隆银行 - 环境变量配置: CMB_HTTP_VERSION={cmb_http_version}")
-            if cmb_http_version.lower() in ['http1.1', 'http/1.1']:
-                additional_options['applicationLayerProtocols'] = ['http/1.1']
-                print(f"🔧 强制使用HTTP/1.1协议")
+            protocols = self._parse_http_version_to_protocols(cmb_http_version)
+            if protocols:
+                additional_options['applicationLayerProtocols'] = protocols
+                print(f"🔧 使用协议: {protocols}")
+            else:
+                print(f"🔧 自动协商HTTP协议版本")
         else:
             print(f"🌐 其他银行 - 环境变量配置: DEFAULT_HTTP_VERSION={default_http_version}")
-            if default_http_version.lower() in ['http1.1', 'http/1.1']:
-                additional_options['applicationLayerProtocols'] = ['http/1.1']
-                print(f"🔧 强制使用HTTP/1.1协议")
+            protocols = self._parse_http_version_to_protocols(default_http_version)
+            if protocols:
+                additional_options['applicationLayerProtocols'] = protocols
+                print(f"🔧 使用协议: {protocols}")
+            else:
+                print(f"🔧 自动协商HTTP协议版本")
 
         return additional_options
+
+    def _parse_http_version_to_protocols(self, version_config: str) -> List[str]:
+        """
+        解析HTTP版本配置字符串为协议列表
+
+        Args:
+            version_config: 环境变量值，如 'h2', 'http1.1', 'h2,http/1.1', 'auto'
+
+        Returns:
+            协议列表，如 ['h2', 'http/1.1']，如果是auto则返回None
+        """
+        if not version_config or version_config.lower() == 'auto':
+            return None
+
+        # 支持逗号分隔的多协议配置
+        protocols = []
+        for protocol in version_config.split(','):
+            protocol = protocol.strip().lower()
+
+            # 标准化协议名称
+            if protocol in ['h2', 'http2', 'http/2']:
+                protocols.append('h2')
+            elif protocol in ['http1.1', 'http/1.1', 'http1', 'http/1']:
+                protocols.append('http/1.1')
+            else:
+                # 保持原始值，让TLS库处理
+                protocols.append(protocol)
+
+        return protocols if protocols else None
 
     def _split_headers(self, headers: Dict[str, str]) -> Tuple[Dict[str, str], Dict[str, str]]:
         """
@@ -388,8 +429,11 @@ class HttpToAttestorConverter:
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
             if key_lower == 'cookie':
-                # 确保Cookie值被正确处理，保持原始格式
-                secret_params['cookieStr'] = value
+                # 🔧 修复：对cookie进行URL编码，避免JSON转义问题
+                import urllib.parse
+                encoded_cookie = urllib.parse.quote(value, safe='=;, ')
+                secret_params['cookieStr'] = encoded_cookie
+                print(f"🔧 Cookie URL编码: {len(value)} -> {len(encoded_cookie)} 字符")
             elif key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
             else:
@@ -431,31 +475,52 @@ class HttpToAttestorConverter:
             explicit_host=explicit_host,
         )
 
-    def _enforce_attestor_header_requirements(self, headers: Dict[str, str], body: str) -> None:
+    def _enforce_attestor_header_requirements(self, headers: Dict[str, str], body: str, host: str = None) -> None:
         """
         规范化并强制设置满足 attestor-core http provider 的头部要求：
-        - Connection 必须是 close
+        - 根据银行类型设置不同的headers策略
+        - 确保HTTP协议必需的headers存在
         - 消除大小写重复键（优先使用标准首字母大写）
-        - 当 body 为空时，移除不必要的 Content-Length 或设为 0（可选，保持稳妥）
+
+        Args:
+            headers: 请求头字典
+            body: 请求体
+            host: 目标主机名（从flow中获取）
         """
         if not headers:
             return
 
-        # 统一 Connection
-        # 如果存在任意形式的 connection 头，最终强制为 'close'
-        value_connection = 'close'
+        print(f"🔍 _enforce_attestor_header_requirements 被调用")
+        print(f"🔍 当前headers: {list(headers.keys())}")
+
+        # 🏦 检测银行类型
+        bank_type = self._detect_bank_type(headers)
+
+        # 🔧 处理 Host 头部 - HTTP协议必需
+        if 'Host' not in headers and 'host' not in headers:
+            if host:
+                headers['Host'] = host
+                print(f"🏠 添加必需的Host头: {host}")
+            else:
+                print(f"⚠️ 警告: 无法获取Host信息，跳过添加Host头")
+
+        # 🔧 处理 Connection 头部
+        # 删除所有不同大小写的 connection 头
         keys_to_delete = []
-        has_standard_key = False
         for k in list(headers.keys()):
-            if k.lower() == 'connection':
-                if k != 'Connection':
-                    keys_to_delete.append(k)
-                else:
-                    has_standard_key = True
+            if k.lower() == 'connection' and k != 'Connection':
+                keys_to_delete.append(k)
         for k in keys_to_delete:
-            # 删除非标准大小写键，避免重复
             headers.pop(k, None)
-        headers['Connection'] = value_connection
+
+        # 根据银行类型设置 Connection
+        if 'Connection' not in headers:
+            if bank_type == 'cmb_wing_lung':
+                headers['Connection'] = 'keep-alive'
+                print(f"🏦 招商永隆银行，设置 Connection: keep-alive")
+            else:
+                headers['Connection'] = 'close'
+                print(f"🌐 其他银行，设置 Connection: close")
 
         # 移除 Transfer-Encoding，避免与 Content-Length 冲突
         for k in list(headers.keys()):
@@ -478,12 +543,98 @@ class HttpToAttestorConverter:
             if existing != str(body_len):
                 headers['Content-Length'] = str(body_len)
 
-        # 强制请求服务端返回未压缩内容，便于 attestor-core 做字符串匹配
+        # 🔧 处理 Accept-Encoding 头部
         ae_keys = [k for k in list(headers.keys()) if k.lower() == 'accept-encoding']
+
+        # 规范化大小写，删除重复的 accept-encoding 头
+        original_value = None
         for k in ae_keys:
+            if original_value is None:
+                original_value = headers[k]
             if k != 'Accept-Encoding':
                 headers.pop(k, None)
-        headers['Accept-Encoding'] = 'identity'
+
+        # 根据银行类型设置 Accept-Encoding
+        if 'Accept-Encoding' not in headers:
+            if bank_type == 'cmb_wing_lung':
+                headers['Accept-Encoding'] = 'gzip, deflate, br, zstd'
+                print(f"🏦 招商永隆银行，设置 Accept-Encoding: gzip, deflate, br, zstd")
+            elif bank_type == 'hsbc':
+                # HSBC 保留原始值，如果没有原始值则不设置
+                if original_value:
+                    headers['Accept-Encoding'] = original_value
+                    print(f"🏦 HSBC 银行，保留原始 Accept-Encoding: {original_value}")
+                else:
+                    print(f"🏦 HSBC 银行，没有原始 Accept-Encoding，不设置默认值")
+            else:
+                headers['Accept-Encoding'] = 'identity'
+                print(f"🌐 其他银行，设置 Accept-Encoding: identity")
+        else:
+            # 如果已存在，根据银行类型决定是否保留
+            if bank_type == 'hsbc':
+                print(f"🏦 HSBC 银行，保留现有 Accept-Encoding: {headers['Accept-Encoding']}")
+            else:
+                print(f"🌐 其他银行，保留现有 Accept-Encoding: {headers['Accept-Encoding']}")
+
+    def _detect_bank_type(self, headers: Dict[str, str]) -> str:
+        """
+        检测银行类型，用于应用不同的headers策略
+
+        Returns:
+            'hsbc': 汇丰银行
+            'cmb_wing_lung': 招商永隆银行
+            'default': 其他银行
+        """
+        # 检查 Host 头
+        host_value = None
+        for key, value in headers.items():
+            if key.lower() == 'host':
+                host_value = value.lower()
+                break
+
+        # 通过 Host 头判断
+        if host_value:
+            if 'hsbc' in host_value:
+                print(f"🏦 检测到 HSBC 银行 (Host: {host_value})")
+                return 'hsbc'
+            elif 'cmb' in host_value or 'winglungbank' in host_value:
+                print(f"🏦 检测到招商永隆银行 (Host: {host_value})")
+                return 'cmb_wing_lung'
+
+        # 如果没有Host头，尝试从其他headers中推断
+        if not host_value:
+            for key, value in headers.items():
+                if 'hsbc' in key.lower() or 'hsbc' in str(value).lower():
+                    print(f"🏦 通过header检测到 HSBC 银行 ({key}: {str(value)[:50]}...)")
+                    return 'hsbc'
+                elif 'cmb' in key.lower() or 'cmb' in str(value).lower():
+                    print(f"🏦 通过header检测到招商永隆银行 ({key}: {str(value)[:50]}...)")
+                    return 'cmb_wing_lung'
+
+        print(f"🌐 检测到其他银行 (Host: {host_value})")
+        return 'default'
+
+    def _should_preserve_original_accept_encoding(self, headers: Dict[str, str]) -> bool:
+        """
+        判断是否应该保留原始的 Accept-Encoding 头部
+
+        Args:
+            headers: 请求头字典
+
+        Returns:
+            True: 保留原始 Accept-Encoding
+            False: 强制设置为 identity
+        """
+        bank_type = self._detect_bank_type(headers)
+
+        # HSBC 保留原始 Accept-Encoding
+        if bank_type == 'hsbc':
+            print(f"🏦 HSBC 银行，保留原始 Accept-Encoding")
+            return True
+
+        # 其他银行强制设置为 identity
+        print(f"🌐 非 HSBC 银行，强制设置 Accept-Encoding: identity")
+        return False
 
     def add_response_pattern(self, name: str, pattern: str, description: str = ""):
         """
@@ -522,8 +673,9 @@ class HttpToAttestorConverter:
             (name, params_json, secret_params_json) 元组
         """
         name = attestor_params.get("name", "http")
-        params_json = json.dumps(attestor_params.get("params", {}), ensure_ascii=False)
-        secret_params_json = json.dumps(attestor_params.get("secretParams", {}), ensure_ascii=False)
+        # 🔧 修复JSON转义问题：确保不会对cookie中的JSON进行过度转义
+        params_json = json.dumps(attestor_params.get("params", {}), ensure_ascii=False, separators=(',', ':'))
+        secret_params_json = json.dumps(attestor_params.get("secretParams", {}), ensure_ascii=False, separators=(',', ':'))
 
         return name, params_json, secret_params_json
 

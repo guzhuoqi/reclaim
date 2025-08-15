@@ -339,14 +339,18 @@ class AttestorExecutor:
             print(f"⏰ 开始时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}")
 
             # 构建命令行参数 - 使用编译后的 JavaScript 文件
-            attestor_script = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                "attestor-core/lib/scripts/generate-receipt-for-python.js"
-            )
+            # 🔧 修复：使用绝对路径确保脚本能被找到
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(current_dir))  # 回到项目根目录
+            attestor_script = os.path.join(project_root, "attestor-core/lib/scripts/generate-receipt-for-python.js")
 
-            # 准备参数
-            params_json = json.dumps(attestor_params["params"])
-            secret_params_json = json.dumps(attestor_params.get("secretParams", {}))
+            # 如果相对路径不存在，尝试绝对路径
+            if not os.path.exists(attestor_script):
+                attestor_script = "/opt/reclaim/attestor-core/lib/scripts/generate-receipt-for-python.js"
+
+            # 准备参数 - 🔧 修复JSON转义问题
+            params_json = json.dumps(attestor_params["params"], ensure_ascii=False)
+            secret_params_json = json.dumps(attestor_params.get("secretParams", {}), ensure_ascii=False)
 
             # 🔍 调试：打印实际传递的参数
             print(f"🔍 调试 - 传递给attestor的完整参数:")

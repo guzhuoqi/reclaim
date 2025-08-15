@@ -163,6 +163,10 @@ class SessionBasedMatcher:
             print(f"   匹配URL: {match_result['matched_url']}")
             print(f"   相似度: {match_result['similarity_score']:.3f}")
             print(f"   基础URL匹配: {match_result['base_exact_match']}")
+
+            # 🔍 命中匹配后，打印mitm拦截到的原始请求
+            self._print_original_request_after_match(flow, provider_id, match_result)
+
         except Exception:
             pass
 
@@ -215,9 +219,40 @@ class SessionBasedMatcher:
             print(f"❌ 无法找到匹配的requestData配置")
             return {}
 
-        # 4. 构建基础参数 - 分离认证头部和普通头部
+        # 4. 构建基础参数 - 🔧 使用完整的原始headers
         request_headers_dict = dict(flow.request.headers)
+
+        # 🔍 调试：打印原始headers
+        print(f"🔍 原始headers总数: {len(request_headers_dict)}")
+
+        # 🚨 特别检查accept-encoding的来源
+        ae_in_original = [k for k in request_headers_dict.keys() if k.lower() == 'accept-encoding']
+        if ae_in_original:
+            print(f"🚨 原始请求中发现accept-encoding!")
+            for k in ae_in_original:
+                print(f"   原始: {k}: {request_headers_dict[k]}")
+        else:
+            print(f"✅ 原始请求中没有accept-encoding")
+
+        for key, value in request_headers_dict.items():
+            if key.lower() in ['cookie', 'authorization']:
+                print(f"   {key}: {value[:50]}... (长度: {len(value)})")
+            else:
+                print(f"   {key}: {value}")
+
         basic_headers, sensitive_headers = self._split_headers(request_headers_dict)
+
+        # 🔍 调试：打印分类结果
+        print(f"🔍 basic_headers数量: {len(basic_headers)}")
+        for key, value in basic_headers.items():
+            print(f"   BASIC: {key}: {value}")
+
+        print(f"🔍 sensitive_headers数量: {len(sensitive_headers)}")
+        for key, value in sensitive_headers.items():
+            if key.lower() in ['cookie', 'authorization']:
+                print(f"   SENSITIVE: {key}: {value[:50]}... (长度: {len(value)})")
+            else:
+                print(f"   SENSITIVE: {key}: {value}")
 
         # 使用解包后的真实URL，避免将外层代理URL写入params
         canonical_url = self._unwrap_proxy_url(flow.request.pretty_url)
@@ -241,12 +276,59 @@ class SessionBasedMatcher:
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
             if key_lower == 'cookie':
-                secret_params['cookieStr'] = value
+                # 🔧 修复：对cookie进行Base64编码，完全避免转义问题
+                import base64
+
+                # 🔍 详细检查原始cookie中的cust-info-hint
+                print(f"🔧 MITM层 - 开始处理Cookie")
+                print(f"🔍 MITM层 - 原始cookie长度: {len(value)}")
+                print(f"🔍 MITM层 - 原始cookie前100字符: {value[:100]}")
+
+                if 'cust-info-hint' in value:
+                    cust_start = value.find('cust-info-hint=')
+                    if cust_start != -1:
+                        cust_end = value.find(',', cust_start)
+                        if cust_end == -1:
+                            cust_end = len(value)
+                        cust_full = value[cust_start:cust_end]
+
+                        print(f"🔍 MITM层 - 找到cust-info-hint:")
+                        print(f"🔍 MITM层 - 完整部分: {repr(cust_full)}")
+                        print(f"🔍 MITM层 - 长度: {len(cust_full)}")
+
+                        # 检查值部分
+                        equal_index = cust_full.find('=')
+                        if equal_index != -1:
+                            cust_value = cust_full[equal_index + 1:]
+                            print(f"🔍 MITM层 - 值部分: {repr(cust_value)}")
+                            print(f"🔍 MITM层 - 值的第一个字符: {repr(cust_value[0]) if cust_value else 'None'}")
+                            print(f"🔍 MITM层 - 值的第二个字符: {repr(cust_value[1]) if len(cust_value) > 1 else 'None'}")
+
+                encoded_cookie = base64.b64encode(value.encode('utf-8')).decode('ascii')
+                secret_params['cookieStr'] = encoded_cookie
+                print(f"🔧 MITM层 - Cookie Base64编码: {len(value)} -> {len(encoded_cookie)} 字符")
+                print(f"🔍 MITM层 - Base64编码后前100字符: {encoded_cookie[:100]}...")
             elif key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
+                print(f"🔍 设置 secretParams.authorisationHeader: {value[:50]}...")
             else:
                 # 其他所有headers都移回params.headers，包括token_type等
                 params['headers'][key] = value
+                print(f"🔍 添加到 params.headers: {key}: {value}")
+
+        # 🔍 调试：打印最终的 params.headers
+        print(f"🔍 最终 params.headers 数量: {len(params['headers'])}")
+        for key, value in params['headers'].items():
+            print(f"   FINAL: {key}: {value}")
+
+        # 🔍 特别检查accept-encoding
+        ae_keys = [k for k in params['headers'].keys() if k.lower() == 'accept-encoding']
+        if ae_keys:
+            print(f"🚨 发现accept-encoding被添加了!")
+            for k in ae_keys:
+                print(f"   {k}: {params['headers'][k]}")
+        else:
+            print(f"✅ 没有accept-encoding，符合原始请求")
 
         # 构建attestor_params的正确结构 - 🎯 添加必要的顶层字段
         attestor_params = {
@@ -284,7 +366,9 @@ class SessionBasedMatcher:
         # 7. 规范化 headers 以满足 attestor-core http provider 的要求（强制 Connection: close 等）
         try:
             _converter = HttpToAttestorConverter()
-            _converter._enforce_attestor_header_requirements(params['headers'], params['body'])  # noqa: SLF001 私有方法，受控调用
+            # 从flow中获取真正的host
+            host = flow.request.pretty_host
+            _converter._enforce_attestor_header_requirements(params['headers'], params['body'], host)  # noqa: SLF001 私有方法，受控调用
         except Exception as _e:
             # 规范化失败不应阻塞流程，打印一次调试信息
             print(f"⚠️ headers规范化失败（忽略）：{_e}")
@@ -881,6 +965,37 @@ class SessionBasedMatcher:
                 basic_headers[key] = value
 
         return basic_headers, sensitive_headers
+
+    def _print_original_request_after_match(self, flow, provider_id: str, match_result: Dict):
+        """
+        命中匹配后，打印mitm拦截到的原始请求
+        """
+        try:
+            print("=" * 80)
+            print("🎯 匹配成功 - MITM拦截到的原始请求:")
+            print("=" * 80)
+
+            # 请求行
+            print(f"{flow.request.method} {flow.request.path} HTTP/{flow.request.http_version}")
+
+            # 请求头
+            for name, value in flow.request.headers.items():
+                print(f"{name}: {value}")
+
+            # 空行
+            print("")
+
+            # 请求体
+            if flow.request.content:
+                try:
+                    body_text = flow.request.get_text()
+                    print(body_text)
+                except:
+                    print(flow.request.content.decode('utf-8', errors='ignore'))
+
+            print("=" * 80)
+        except Exception as e:
+            print(f"❌ 打印原始请求失败: {e}")
 
 
 

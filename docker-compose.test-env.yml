@@ -53,13 +53,13 @@ services:
       # 指定 main-flow 数据目录路径
       - MAIN_FLOW_DATA_DIR=/app/main-flow/data
       # 🔧 银行HTTP版本控制环境变量
-      - HSBC_HTTP_VERSION=${HSBC_HTTP_VERSION:-http1.1}
+      - HSBC_HTTP_VERSION=${HSBC_HTTP_VERSION:-h2}
       - CMB_HTTP_VERSION=${CMB_HTTP_VERSION:-auto}
       - DEFAULT_HTTP_VERSION=${DEFAULT_HTTP_VERSION:-auto}
     depends_on:
       - attestor-core
     ports:
-      - "31080:8080"
+      - "8080:8080"
       - "8082:8082"
       - "8083:8083"
     restart: unless-stopped

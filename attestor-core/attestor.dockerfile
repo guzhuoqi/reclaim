@@ -16,70 +16,44 @@ WORKDIR /app
 
 RUN npm ci --include=optional
 
-COPY ./ /app
+# 🚀 拷贝预拷贝的ZK文件（如果存在）
+# 注意：如果目录不存在，构建会失败，这是预期行为
+# 请确保在构建前运行预拷贝命令
+COPY ./node_modules/@reclaimprotocol/zk-symmetric-crypto /app/node_modules/@reclaimprotocol/zk-symmetric-crypto
+
+# 🎯 优化拷贝：只拷贝源代码，避免覆盖 node_modules 中的预拷贝文件
+COPY ./src /app/src
+COPY ./tsconfig*.json /app/
+COPY ./webpack.config.js /app/
+COPY ./jest.config.js /app/
+COPY ./commitlint.config.cjs /app/
+COPY ./scripts /app/scripts
+COPY ./proto /app/proto
+COPY ./avs /app/avs
+COPY ./examples /app/examples
+COPY ./docs /app/docs
+COPY ./browser /app/browser
+COPY ./cert /app/cert
+COPY ./*.json /app/
+COPY ./*.md /app/
 
 RUN npm run build
 
-# 🚀 使用智能ZK文件下载器：避免不必要的删除和重新下载
-RUN npm run download:zk-files
-
-# 检查 ZK 文件下载情况
-RUN echo "=== 检查 ZK 文件下载情况 ===" && \
-    find node_modules/@reclaimprotocol/zk-symmetric-crypto -name "*.wasm" -o -name "*.zkey" | head -10 && \
-    echo "ZK 文件总数: $(find node_modules/@reclaimprotocol/zk-symmetric-crypto/resources -type f | wc -l)"
-
-RUN npm run build:browser
-
-# 创建目标目录并 COPY ZKP 文件到指定位置
-RUN mkdir -p /opt/reclaim/attestor-core/node_modules/@reclaimprotocol/zk-symmetric-crypto/resources && \
-    echo "📁 创建目标目录: /opt/reclaim/attestor-core/node_modules/@reclaimprotocol/zk-symmetric-crypto/resources"
-
-# COPY 构建时生成的 ZKP 文件到目标目录
-RUN if [ -d "node_modules/@reclaimprotocol/zk-symmetric-crypto/resources" ]; then \
-        cp -r node_modules/@reclaimprotocol/zk-symmetric-crypto/resources/* \
-              /opt/reclaim/attestor-core/node_modules/@reclaimprotocol/zk-symmetric-crypto/resources/ && \
-        echo "✅ ZKP 文件已 COPY 到: /opt/reclaim/attestor-core/node_modules/@reclaimprotocol/zk-symmetric-crypto/resources" && \
-        echo "📊 COPY 后文件数量: $(find /opt/reclaim/attestor-core/node_modules/@reclaimprotocol/zk-symmetric-crypto/resources -type f | wc -l)"; \
+# 🚀 智能ZK文件检查和下载
+RUN echo "🔍 检查ZK文件状态..." && \
+    if [ -f "node_modules/@reclaimprotocol/zk-symmetric-crypto/resources/snarkjs/aes-256-ctr/circuit.wasm" ]; then \
+      echo "✅ 检测到预拷贝的ZK文件，跳过下载" && \
+      echo "📊 现有ZK文件数量: $(find node_modules/@reclaimprotocol/zk-symmetric-crypto/resources -type f 2>/dev/null | wc -l)"; \
     else \
-        echo "❌ 源 ZK 文件目录不存在"; \
-        exit 1; \
+      echo "📥 未检测到ZK文件，执行下载..." && \
+      npm run download:zk-files && \
+      echo "📊 ZK文件下载完成，文件数量: $(find node_modules/@reclaimprotocol/zk-symmetric-crypto/resources -type f 2>/dev/null | wc -l)"; \
     fi
-
-# 验证关键文件是否存在
-RUN echo "🔍 验证关键 ZKP 文件..." && \
-    for algo in aes-256-ctr aes-128-ctr chacha20; do \
-        wasm_file="/opt/reclaim/attestor-core/node_modules/@reclaimprotocol/zk-symmetric-crypto/resources/snarkjs/$algo/circuit.wasm"; \
-        if [ -f "$wasm_file" ]; then \
-            echo "✅ $algo/circuit.wasm 存在 ($(stat -c%s "$wasm_file") bytes)"; \
-        else \
-            echo "❌ $algo/circuit.wasm 缺失"; \
-        fi; \
-    done
 
 RUN npm prune --production
 
-# 创建启动脚本，确保运行时 ZKP 文件可用
-RUN echo '#!/bin/bash' > /app/init-zk.sh && \
-    echo 'echo "🔄 检查 ZKP 文件可用性..."' >> /app/init-zk.sh && \
-    echo 'ZK_DIR="/app/node_modules/@reclaimprotocol/zk-symmetric-crypto/resources"' >> /app/init-zk.sh && \
-    echo 'ZK_SOURCE="/opt/reclaim/attestor-core/node_modules/@reclaimprotocol/zk-symmetric-crypto/resources"' >> /app/init-zk.sh && \
-    echo 'if [ ! -f "$ZK_DIR/snarkjs/aes-256-ctr/circuit.wasm" ]; then' >> /app/init-zk.sh && \
-    echo '  echo "📁 运行时 ZK 目录为空，从构建时备份恢复..."' >> /app/init-zk.sh && \
-    echo '  mkdir -p "$ZK_DIR"' >> /app/init-zk.sh && \
-    echo '  if [ -d "$ZK_SOURCE" ]; then' >> /app/init-zk.sh && \
-    echo '    cp -r "$ZK_SOURCE"/* "$ZK_DIR"/' >> /app/init-zk.sh && \
-    echo '    echo "✅ ZKP 文件从构建时备份恢复完成"' >> /app/init-zk.sh && \
-    echo '  else' >> /app/init-zk.sh && \
-    echo '    echo "⚠️ 构建时备份不存在，重新下载..."' >> /app/init-zk.sh && \
-    echo '    cd /app && npm run download:zk-files' >> /app/init-zk.sh && \
-    echo '  fi' >> /app/init-zk.sh && \
-    echo 'else' >> /app/init-zk.sh && \
-    echo '  echo "✅ ZKP 文件已存在，跳过恢复"' >> /app/init-zk.sh && \
-    echo 'fi' >> /app/init-zk.sh && \
-    echo 'echo "🚀 启动应用..."' >> /app/init-zk.sh && \
-    echo 'exec "$@"' >> /app/init-zk.sh && \
-    chmod +x /app/init-zk.sh
 
-ENTRYPOINT ["/app/init-zk.sh"]
+
+
 CMD ["npm", "run", "start"]
 EXPOSE 8001

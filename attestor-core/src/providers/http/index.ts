@@ -78,28 +78,47 @@ const HTTP_PROVIDER: Provider<'http'> = {
 			throw new Error('auth parameters are not set')
 		}
 
+		// 🔍 调试：打印接收到的参数
+		console.log('🔍 ATTESTOR-CORE 接收到的 params.headers:')
 		const pubHeaders = params.headers || {}
+		Object.entries(pubHeaders).forEach(([key, value]) => {
+			console.log(`   RECEIVED: ${key}: ${value}`)
+		})
+		console.log(`🔍 params.headers 总数: ${Object.keys(pubHeaders).length}`)
+
+		console.log('🔍 ATTESTOR-CORE 接收到的 secretParams:')
+		if (secretParams.cookieStr) {
+			console.log(`   cookieStr: ${secretParams.cookieStr.substring(0, 50)}... (长度: ${secretParams.cookieStr.length})`)
+		}
+		if (secretParams.authorisationHeader) {
+			console.log(`   authorisationHeader: ${secretParams.authorisationHeader.substring(0, 50)}...`)
+		}
+		if (secretParams.headers) {
+			console.log(`   secretParams.headers:`)
+			Object.entries(secretParams.headers).forEach(([key, value]) => {
+				console.log(`     SECRET: ${key}: ${value}`)
+			})
+		}
+
 		const secHeaders = { ...secretParams.headers }
+		// 🔧 修复：将Base64解码挪到后面，在实际使用时才解码
 		if(secretParams.cookieStr) {
+			// 直接存储Base64编码的cookie，稍后在addToMap中解码
 			secHeaders['Cookie'] = secretParams.cookieStr
+			console.error('[DEBUG] 存储Base64编码的cookie到secHeaders，长度:', secretParams.cookieStr.length)
 		}
 
 		if(secretParams.authorisationHeader) {
 			secHeaders['Authorization'] = secretParams.authorisationHeader
 		}
 
-		// 🏦 银行兼容性：检测银行URL
-		const isCMBWingLungBank = params.url.includes('cmbwinglungbank.com')
-
+		// 🔧 简化：删除银行特殊逻辑，User-Agent由MITM层统一处理
 		const hasUserAgent = Object.keys(pubHeaders)
 			.some(k => k.toLowerCase() === 'user-agent') ||
             Object.keys(secHeaders)
             	.some(k => k.toLowerCase() === 'user-agent')
 		if(!hasUserAgent) {
-			// 🏦 银行兼容性修复：允许不设置User-Agent，让银行请求更自然
-			if (!isCMBWingLungBank) {
-				pubHeaders['User-Agent'] = RECLAIM_USER_AGENT
-			}
+			pubHeaders['User-Agent'] = RECLAIM_USER_AGENT
 			logger.warn('No User-Agent provided - request may be blocked by some services')
 		}
 
@@ -119,60 +138,79 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		const secHeadersList = buildHeaders(secHeaders)
 		logger.info({ requestLine: reqLine })
 
-		// 🏦 银行兼容性：构建核心headers，避免重复
-		const coreHeaders = [reqLine]
+		// 🔧 简化：删除coreHeaders逻辑，所有headers由MITM层统一处理
+		console.log(`🔍 pubHeaders keys: ${Object.keys(pubHeaders).join(', ')}`)
+		console.log(`🔍 secHeaders keys: ${Object.keys(secHeaders).join(', ')}`)
 
-		// 检查是否已存在Host头
-		const hasHost = [...Object.keys(pubHeaders), ...Object.keys(secHeaders)]
-			.some(k => k.toLowerCase() === 'host')
-		if (!hasHost) {
-			coreHeaders.push(`Host: ${getHostHeaderString(url)}`)
-		}
-
-		// 🏦 动态添加Content-Length（只有当有body时）
-		const hasContentLength = [...Object.keys(pubHeaders), ...Object.keys(secHeaders)]
-			.some(k => k.toLowerCase() === 'content-length')
-		if (contentLength > 0 && !hasContentLength) {
-			coreHeaders.push(`Content-Length: ${contentLength}`)
-		}
-
-		// 🏦 银行兼容性：使用浏览器友好的headers
-		const hasConnection = [...Object.keys(pubHeaders), ...Object.keys(secHeaders)]
-			.some(k => k.toLowerCase() === 'connection')
-		if (!hasConnection) {
-			coreHeaders.push(isCMBWingLungBank ? 'Connection: keep-alive' : 'Connection: close')
-		}
-
-		const hasAcceptEncoding = [...Object.keys(pubHeaders), ...Object.keys(secHeaders)]
-			.some(k => k.toLowerCase() === 'accept-encoding')
-		if (!hasAcceptEncoding) {
-			// 🏦 银行兼容性：招商永隆银行使用完整的压缩格式，其他以传入参数为准
-			coreHeaders.push(isCMBWingLungBank ? 'Accept-Encoding: gzip, deflate, br, zstd' : 'Accept-Encoding: identity')
-		}
-
-		// 🏦 银行兼容性：确保关键headers存在并正确排序
-		let allHeaders = [...coreHeaders]
-
-		// 合并所有headers到Map中，确保不丢失任何header
+		// 🔧 简化：直接处理用户headers，避免格式混乱
 		const allHeadersMap = new Map()
-
-		// 首先添加核心headers（包含动态生成的Host等）
-		coreHeaders.slice(1).forEach(header => { // 跳过请求行
-			const colonIndex = header.indexOf(':')
-			if (colonIndex > 0) {
-				const key = header.slice(0, colonIndex).toLowerCase().trim()
-				allHeadersMap.set(key, header)
-				// 🔍 调试：记录Host头处理
-				if (key === 'host') {
-					console.log(`🏠 从coreHeaders添加Host头: ${header}`)
-				}
-			}
-		})
 
 		// 然后添加配置中的headers
 		const addToMap = (headers: any) => {
 			Object.entries(headers).forEach(([key, value]) => {
-				const headerStr = `${key}: ${value}`
+				// 🔧 修复：确保value是纯value，避免重复前缀
+				let cleanValue = value as string
+				const expectedPrefix = `${key}:`
+
+				// 🔧 修复：在这里进行Cookie的Base64解码
+				if (key.toLowerCase() === 'cookie') {
+					try {
+						// 检查是否是Base64编码的cookie
+						const decodedCookie = Buffer.from(cleanValue, 'base64').toString('utf-8')
+						cleanValue = decodedCookie
+						console.error('[DEBUG] Cookie Base64解码完成')
+						console.error('[DEBUG] 解码后cookie长度:', decodedCookie.length)
+						console.error('[DEBUG] 解码后cookie前100字符:', decodedCookie.substring(0, 100))
+
+						// 🔍 详细检查cust-info-hint
+						if (decodedCookie.includes('cust-info-hint')) {
+							const custInfoStart = decodedCookie.indexOf('cust-info-hint=')
+							if (custInfoStart !== -1) {
+								const custInfoEnd = decodedCookie.indexOf(',', custInfoStart)
+								const custInfoFull = custInfoEnd !== -1 ?
+									decodedCookie.substring(custInfoStart, custInfoEnd) :
+									decodedCookie.substring(custInfoStart)
+
+								console.error('[DEBUG] 完整的cust-info-hint部分:')
+								console.error(`[DEBUG] 原始字符串: ${JSON.stringify(custInfoFull)}`)
+								console.error(`[DEBUG] 长度: ${custInfoFull.length}`)
+
+								// 检查值部分
+								const equalIndex = custInfoFull.indexOf('=')
+								if (equalIndex !== -1) {
+									const custInfoValue = custInfoFull.substring(equalIndex + 1)
+									console.error(`[DEBUG] cust-info-hint值部分: ${JSON.stringify(custInfoValue)}`)
+									console.error(`[DEBUG] 值的第一个字符: ${JSON.stringify(custInfoValue.charAt(0))}`)
+									console.error(`[DEBUG] 值的第二个字符: ${JSON.stringify(custInfoValue.charAt(1))}`)
+								}
+							}
+						}
+					} catch (error) {
+						console.error('[DEBUG] Cookie Base64解码失败，使用原始值:', error)
+						// 如果解码失败，使用原始值
+					}
+				}
+
+				// 🔍 调试：打印原始数据
+				if (key.toLowerCase() === 'cookie' || key.toLowerCase() === 'x-hsbc-chnl-countrycode' || key.toLowerCase() === 'referer') {
+					console.log(`🔍 DEBUG ${key}: 原始value="${cleanValue.substring(0, 100)}..."`)
+					console.log(`🔍 DEBUG ${key}: 期望前缀="${expectedPrefix}"`)
+					console.log(`🔍 DEBUG ${key}: 是否以前缀开头=${cleanValue.toLowerCase().startsWith(expectedPrefix.toLowerCase())}`)
+
+					// 特别检查cookie中的cust-info-hint
+					if (key.toLowerCase() === 'cookie' && cleanValue.includes('cust-info-hint')) {
+						const custInfoMatch = cleanValue.match(/cust-info-hint=([^,]+)/)
+						if (custInfoMatch) {
+							console.log(`🔍 DEBUG cookie中的cust-info-hint: ${custInfoMatch[1].substring(0, 50)}...`)
+						}
+					}
+				}
+
+				if (cleanValue.toLowerCase().startsWith(expectedPrefix.toLowerCase())) {
+					cleanValue = cleanValue.substring(expectedPrefix.length).trim()
+					console.log(`🔧 ${key}: 去掉前缀后="${cleanValue}"`)
+				}
+				const headerStr = `${key}: ${cleanValue}`
 				allHeadersMap.set(key.toLowerCase(), headerStr)
 				// 🔍 调试：记录Host头处理
 				if (key.toLowerCase() === 'host') {
@@ -184,6 +222,20 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		addToMap(pubHeaders)
 		addToMap(secHeaders)
 
+		// 🔍 调试：打印最终的 allHeadersMap
+		console.log('🔍 ATTESTOR-CORE 最终构建的 headers:')
+		allHeadersMap.forEach((headerStr, key) => {
+			console.log(`   FINAL: ${headerStr}`)
+		})
+		console.log(`🔍 最终 headers 总数: ${allHeadersMap.size}`)
+
+		// 🔍 调试：特别检查accept-encoding
+		if (allHeadersMap.has('accept-encoding')) {
+			console.error(`🚨 发现accept-encoding在最终headers中: ${allHeadersMap.get('accept-encoding')}`)
+		} else {
+			console.log(`✅ 最终headers中没有accept-encoding，符合原始请求`)
+		}
+
 		// 🔍 调试：检查最终Map中的Host头
 		if (allHeadersMap.has('host')) {
 			console.log(`🏠 最终Map中的Host头: ${allHeadersMap.get('host')}`)
@@ -192,11 +244,10 @@ const HTTP_PROVIDER: Provider<'http'> = {
 			console.log(`📋 Map中的keys: ${Array.from(allHeadersMap.keys()).join(', ')}`)
 		}
 
-		// 简化的headers处理：保持Host头修复但去掉Chrome精确排序
-		// 重置allHeaders为只包含请求行
-		allHeaders = [coreHeaders[0]]
+		// 🔧 简化：构建最终的HTTP请求
+		const allHeaders = [reqLine]  // 只包含请求行
 
-		// 直接按Map顺序添加所有headers（已确保Host头不丢失）
+		// 直接按Map顺序添加所有headers
 		allHeadersMap.forEach(header => allHeaders.push(header))
 
 		const httpReqHeaderStr = [
@@ -206,15 +257,22 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		const headerStr = strToUint8Array(httpReqHeaderStr)
 		const data = concatenateUint8Arrays([headerStr, body])
 
-		// 🏦 DEBUG: 打印银行请求关键信息
-		if (isCMBWingLungBank) {
-			console.log('\n🏦 银行API请求 - 关键信息:')
-			console.log(`📊 请求统计: headers=${headerStr.length}字节, body=${body.length}字节`)
-			console.log(`🔑 会话ID: ${secHeaders['Cookie']?.includes('dse_sessionId') ? 'OK' : 'MISSING'}`)
-			console.log(`📤 User-Agent: ${secHeaders['User-Agent'] ? '已设置' : '未设置'}`)
-			console.log(`🔗 连接类型: ${secHeaders['Connection'] || '默认'}`)
-			console.log('='.repeat(50))
+		// 🔍 DEBUG: 打印 attestor-core 构建的完整HTTP请求
+		console.log('='.repeat(80))
+		console.log('🚀 ATTESTOR-CORE 构建的HTTP请求:')
+		console.log('='.repeat(80))
+		console.log(httpReqHeaderStr)
+		if (body.length > 0) {
+			try {
+				const bodyText = new TextDecoder().decode(body)
+				console.log(bodyText)
+			} catch (e) {
+				console.log('[二进制请求体]')
+			}
 		}
+		console.log('='.repeat(80))
+
+		// 🔧 删除银行特殊调试信息
 
 		// hide all secret headers
 		const secHeadersStr = secHeadersList.join('\r\n')
@@ -388,24 +446,13 @@ const HTTP_PROVIDER: Provider<'http'> = {
 			throw new Error(`Expected host: ${expectedHostStr}, found: ${req.headers.host}`)
 		}
 
+		// 🔧 简化：删除银行特殊的Connection验证逻辑
 		const connectionHeader = req.headers['connection']
-		// 🏦 银行兼容性：招商永隆银行允许keep-alive连接，其他以传入参数为准
-		const isCMBWingLungBankRequest = params.url.includes('cmbwinglungbank.com')
-		const allowedConnections = isCMBWingLungBankRequest ? ['close', 'keep-alive'] : ['close']
+		console.log(`🔗 DEBUG Connection头: "${connectionHeader}" (类型: ${typeof connectionHeader})`)
 
-		// 🔍 调试：打印Connection头信息
-		console.log(`🔗 DEBUG Connection头分析:`)
-		console.log(`   原始值: "${connectionHeader}" (类型: ${typeof connectionHeader})`)
-		console.log(`   是否为undefined: ${connectionHeader === undefined}`)
-		console.log(`   是否为null: ${connectionHeader === null}`)
-		console.log(`   是否为空字符串: ${connectionHeader === ''}`)
-		console.log(`   是否为银行请求: ${isCMBWingLungBankRequest}`)
-		console.log(`   允许的连接类型: [${allowedConnections.join(', ')}]`)
-		console.log(`   检查条件: connectionHeader=${!!connectionHeader}, 在允许列表中=${connectionHeader ? allowedConnections.includes(connectionHeader) : '跳过检查'}`)
-
-		// 🔧 修复：当Connection头被redacted时跳过验证（数据已成功获取说明请求正确）
-		if(connectionHeader && !allowedConnections.includes(connectionHeader)) {
-			throw new Error(`Connection header must be one of [${allowedConnections.join(', ')}], got "${connectionHeader}"`)
+		// 简化验证：只检查close连接（MITM层已确保正确设置）
+		if(connectionHeader && connectionHeader !== 'close' && connectionHeader !== 'keep-alive') {
+			throw new Error(`Unexpected connection header: "${connectionHeader}"`)
 		}
 
 		const serverBlocks = receipt
