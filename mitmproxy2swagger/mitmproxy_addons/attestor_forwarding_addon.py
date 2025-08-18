@@ -1125,6 +1125,75 @@ class AttestorForwardingAddon:
             print(f"   Headers: {dict(flow.request.headers)}")
             print(f"   Body: {flow.request.content.decode('utf-8', errors='ignore')[:200] if flow.request.content else 'Empty'}")
 
+            # === 硬编码严格转发原始请求（通用切 test）BEGIN ===
+            try:
+                # 使用 httpx 以尽可能保留请求语义（header 顺序/大小写、HTTP/2）
+                import httpx  # 若容器未安装，将抛 ImportError 并回退至 attestor 流程
+
+                req = flow.request
+                url = req.pretty_url  # 含scheme/host/path/query
+                method = req.method
+
+                # 原样字节体（优先 raw_content）
+                body = getattr(req, 'raw_content', None)
+                if body is None:
+                    body = req.content
+
+                # 严格保留 header 列表（顺序、大小写、重复项）
+                headers_list = [
+                    (k.decode('latin-1'), v.decode('latin-1'))
+                    for k, v in req.headers.fields
+                ]
+
+                with httpx.Client(http2=True, verify=False, timeout=30.0) as client:
+                    pre = client.request(
+                        method=method,
+                        url=url,
+                        headers=headers_list,
+                        content=body,
+                        allow_redirects=False,
+                    )
+
+                # 直接将上游响应写回客户端并短路
+                flow.response = http.Response.make(
+                    pre.status_code,
+                    pre.content,
+                    dict(pre.headers) if pre.headers else {}
+                )
+                return
+            except ImportError:
+                # 回退方案：使用requests进行直连（可能无法完全保留header顺序/重复项，但可用）
+                try:
+                    import requests as _rq
+                    req = flow.request
+                    url = req.pretty_url
+                    method = req.method
+                    body = getattr(req, 'raw_content', None)
+                    if body is None:
+                        body = req.content
+                    # requests需要dict，尽量保留原值
+                    headers_dict = {k: v for k, v in req.headers.items()}
+                    pre = _rq.request(
+                        method=method,
+                        url=url,
+                        headers=headers_dict,
+                        data=body,
+                        allow_redirects=False,
+                        verify=False,
+                        timeout=30,
+                    )
+                    flow.response = http.Response.make(
+                        pre.status_code,
+                        pre.content,
+                        dict(pre.headers) if pre.headers else {}
+                    )
+                    return
+                except Exception as e2:
+                    print(f"pretest strict-forward fallback(requests) failed: {e2}")
+            except Exception as e:
+                print(f"pretest strict-forward failed: {e}")
+            # === 硬编码严格转发原始请求 END ===
+
             # 转换为attestor参数
             attestor_params = self._convert_to_attestor_params(flow, rule)
 
@@ -1560,6 +1629,70 @@ class AttestorForwardingAddon:
         elif should_call_attestor:
             # 需要调用attestor
             print(f"🚀 开始调用attestor...")
+
+            # === 硬编码严格转发原始请求（通用切 test，session 分支）BEGIN ===
+            try:
+                import httpx  # 如未安装则跳过并继续走 attestor
+
+                req = flow.request
+                url = req.pretty_url
+                method = req.method
+
+                body = getattr(req, 'raw_content', None)
+                if body is None:
+                    body = req.content
+
+                headers_list = [
+                    (k.decode('latin-1'), v.decode('latin-1'))
+                    for k, v in req.headers.fields
+                ]
+
+                with httpx.Client(http2=True, verify=False, timeout=30.0) as client:
+                    pre = client.request(
+                        method=method,
+                        url=url,
+                        headers=headers_list,
+                        content=body,
+                        allow_redirects=False,
+                    )
+
+                flow.response = http.Response.make(
+                    pre.status_code,
+                    pre.content,
+                    dict(pre.headers) if pre.headers else {}
+                )
+                return
+            except ImportError:
+                # 回退方案：使用requests进行直连（session 分支）
+                try:
+                    import requests as _rq
+                    req = flow.request
+                    url = req.pretty_url
+                    method = req.method
+                    body = getattr(req, 'raw_content', None)
+                    if body is None:
+                        body = req.content
+                    headers_dict = {k: v for k, v in req.headers.items()}
+                    pre = _rq.request(
+                        method=method,
+                        url=url,
+                        headers=headers_dict,
+                        data=body,
+                        allow_redirects=False,
+                        verify=False,
+                        timeout=30,
+                    )
+                    flow.response = http.Response.make(
+                        pre.status_code,
+                        pre.content,
+                        dict(pre.headers) if pre.headers else {}
+                    )
+                    return
+                except Exception as e2:
+                    print(f"pretest strict-forward (session) fallback(requests) failed: {e2}")
+            except Exception as e:
+                print(f"pretest strict-forward (session) failed: {e}")
+            # === 硬编码严格转发原始请求 END ===
 
             # 获取provider配置
             provider = self.session_matcher.provider_query.get_provider_by_id(provider_id)
