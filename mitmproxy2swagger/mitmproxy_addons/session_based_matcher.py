@@ -17,6 +17,7 @@ from provider_query import get_provider_query
 from url_matcher import URLMatcher
 from attestor_db import get_attestor_db
 from http_to_attestor_converter import HttpToAttestorConverter
+from cookie_handler import CookieHandler
 
 
 class SessionBasedMatcher:
@@ -152,7 +153,9 @@ class SessionBasedMatcher:
         has_auth = False
         try:
             sp = attestor_params.get('secretParams') or {}
-            has_auth = bool(sp.get('cookieStr') or sp.get('authorisationHeader'))
+            # 🍪 使用统一的cookie检查方法
+            has_cookies = CookieHandler.has_cookies_in_secret_params(sp)
+            has_auth = bool(has_cookies or sp.get('authorisationHeader'))
         except Exception:
             has_auth = False
 
@@ -219,11 +222,27 @@ class SessionBasedMatcher:
             print(f"❌ 无法找到匹配的requestData配置")
             return {}
 
-        # 4. 构建基础参数 - 🔧 使用完整的原始headers
-        request_headers_dict = dict(flow.request.headers)
+        # 4. 构建基础参数 - 🔧 使用req.headers.fields保持cookie独立（学习001.json成功模式）
+        request_headers_dict = {}
+        cookie_headers = []  # 存储独立的cookie headers
+        
+        # 🍪 关键修复：使用headers.fields获取原始字段列表，避免cookie合并
+        for k, v in flow.request.headers.fields:
+            key_str = k.decode('latin-1') 
+            value_str = v.decode('latin-1')
+            
+            if key_str.lower() == 'cookie':
+                # 收集所有独立的cookie headers
+                cookie_headers.append(value_str)
+                print(f"🍪 发现独立cookie #{len(cookie_headers)}: {value_str[:50]}...")
+            else:
+                # 非cookie headers正常处理
+                request_headers_dict[key_str] = value_str
+        
+        print(f"🍪 总共找到 {len(cookie_headers)} 个独立cookie headers")
 
         # 🔍 调试：打印原始headers
-        print(f"🔍 原始headers总数: {len(request_headers_dict)}")
+        print(f"🔍 原始headers总数: {len(request_headers_dict)} + {len(cookie_headers)}个cookie")
 
         # 🚨 特别检查accept-encoding的来源
         ae_in_original = [k for k in request_headers_dict.keys() if k.lower() == 'accept-encoding']
@@ -240,16 +259,21 @@ class SessionBasedMatcher:
             else:
                 print(f"   {key}: {value}")
 
+        # 🍪 关键修复：独立处理cookie headers，不通过_split_headers合并
         basic_headers, sensitive_headers = self._split_headers(request_headers_dict)
+        
+        # 确保cookie不在basic_headers或sensitive_headers中，因为我们要独立处理
+        basic_headers = {k: v for k, v in basic_headers.items() if k.lower() != 'cookie'}
+        sensitive_headers = {k: v for k, v in sensitive_headers.items() if k.lower() != 'cookie'}
 
         # 🔍 调试：打印分类结果
-        print(f"🔍 basic_headers数量: {len(basic_headers)}")
+        print(f"🔍 basic_headers数量: {len(basic_headers)} (排除cookie)")
         for key, value in basic_headers.items():
             print(f"   BASIC: {key}: {value}")
 
-        print(f"🔍 sensitive_headers数量: {len(sensitive_headers)}")
+        print(f"🔍 sensitive_headers数量: {len(sensitive_headers)} (排除cookie)")
         for key, value in sensitive_headers.items():
-            if key.lower() in ['cookie', 'authorization']:
+            if key.lower() in ['authorization']:
                 print(f"   SENSITIVE: {key}: {value[:50]}... (长度: {len(value)})")
             else:
                 print(f"   SENSITIVE: {key}: {value}")
@@ -272,43 +296,25 @@ class SessionBasedMatcher:
         # 构建secretParams - 按照attestor-core的期望格式
         secret_params = {}
 
-        # 只处理Cookie和Authorization，其他所有headers都保留在params.headers中
+        # 🍪 关键修复：处理独立的cookie headers（模仿001.json成功模式）
+        if cookie_headers:
+            if 'headers' not in secret_params:
+                secret_params['headers'] = {}
+            
+            print(f"🍪 开始处理 {len(cookie_headers)} 个独立cookie headers...")
+            
+            # 为每个独立cookie创建单独的header entry
+            for i, cookie_value in enumerate(cookie_headers):
+                cookie_key = f"cookie-{i}" if i > 0 else "cookie"  # 第一个保持原key，其他加索引
+                secret_params['headers'][cookie_key] = cookie_value.strip()
+                print(f"🍪 secretParams.headers[{cookie_key}]: {cookie_value[:50]}... (长度: {len(cookie_value)})")
+            
+            print(f"🍪 ✅ 成功设置 {len(cookie_headers)} 个独立cookie到secretParams.headers")
+        
+        # 处理其他sensitive headers（Authorization等）
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
-            if key_lower == 'cookie':
-                # 🔧 修复：对cookie进行Base64编码，完全避免转义问题
-                import base64
-
-                # 🔍 详细检查原始cookie中的cust-info-hint
-                print(f"🔧 MITM层 - 开始处理Cookie")
-                print(f"🔍 MITM层 - 原始cookie长度: {len(value)}")
-                print(f"🔍 MITM层 - 原始cookie前100字符: {value[:100]}")
-
-                if 'cust-info-hint' in value:
-                    cust_start = value.find('cust-info-hint=')
-                    if cust_start != -1:
-                        cust_end = value.find(',', cust_start)
-                        if cust_end == -1:
-                            cust_end = len(value)
-                        cust_full = value[cust_start:cust_end]
-
-                        print(f"🔍 MITM层 - 找到cust-info-hint:")
-                        print(f"🔍 MITM层 - 完整部分: {repr(cust_full)}")
-                        print(f"🔍 MITM层 - 长度: {len(cust_full)}")
-
-                        # 检查值部分
-                        equal_index = cust_full.find('=')
-                        if equal_index != -1:
-                            cust_value = cust_full[equal_index + 1:]
-                            print(f"🔍 MITM层 - 值部分: {repr(cust_value)}")
-                            print(f"🔍 MITM层 - 值的第一个字符: {repr(cust_value[0]) if cust_value else 'None'}")
-                            print(f"🔍 MITM层 - 值的第二个字符: {repr(cust_value[1]) if len(cust_value) > 1 else 'None'}")
-
-                encoded_cookie = base64.b64encode(value.encode('utf-8')).decode('ascii')
-                secret_params['cookieStr'] = encoded_cookie
-                print(f"🔧 MITM层 - Cookie Base64编码: {len(value)} -> {len(encoded_cookie)} 字符")
-                print(f"🔍 MITM层 - Base64编码后前100字符: {encoded_cookie[:100]}...")
-            elif key_lower == 'authorization':
+            if key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
                 print(f"🔍 设置 secretParams.authorisationHeader: {value[:50]}...")
             else:

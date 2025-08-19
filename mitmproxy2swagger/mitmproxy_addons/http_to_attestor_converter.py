@@ -11,6 +11,7 @@ import re
 from typing import Dict, List, Any, Optional, Tuple
 from urllib.parse import urlparse, parse_qs
 from mitmproxy import http
+from cookie_handler import CookieHandler, process_sensitive_headers_for_converter
 
 
 class HttpToAttestorConverter:
@@ -102,9 +103,31 @@ class HttpToAttestorConverter:
         """
         request = flow.request
 
-        # 分离基础headers和敏感headers
-        headers_all = dict(request.headers)
+        # 🍪 关键修复：使用headers.fields获取独立cookie（学习001.json成功模式）
+        headers_all = {}
+        cookie_headers = []  # 存储独立的cookie headers
+        
+        # 使用headers.fields获取原始字段列表，避免cookie合并
+        for k, v in request.headers.fields:
+            key_str = k.decode('latin-1')
+            value_str = v.decode('latin-1')
+            
+            if key_str.lower() == 'cookie':
+                # 收集所有独立的cookie headers
+                cookie_headers.append(value_str)
+                print(f"🍪 HttpToAttestorConverter发现独立cookie #{len(cookie_headers)}: {value_str[:50]}...")
+            else:
+                # 非cookie headers正常处理
+                headers_all[key_str] = value_str
+        
+        print(f"🍪 HttpToAttestorConverter总共找到 {len(cookie_headers)} 个独立cookie headers")
+        
+        # 分离基础headers和敏感headers（排除cookie）
         basic_headers, sensitive_headers = self._split_headers(headers_all)
+        
+        # 确保cookie不在分离后的headers中，因为我们要独立处理
+        basic_headers = {k: v for k, v in basic_headers.items() if k.lower() != 'cookie'}
+        sensitive_headers = {k: v for k, v in sensitive_headers.items() if k.lower() != 'cookie'}
 
         # 构建基础参数
         params = {
@@ -134,21 +157,35 @@ class HttpToAttestorConverter:
 
         # 构建secretParams - 按照attestor-core的期望格式
         secret_params: Dict[str, Any] = {}
+        secret_headers: Dict[str, str] = {}  # 存放其他认证headers
 
-        # 只处理Cookie和Authorization，其他所有headers都保留在params.headers中
+        # 🍪 关键修复：处理独立的cookie headers（模仿001.json成功模式）
+        if cookie_headers:
+            print(f"🍪 convert_flow_to_attestor_params开始处理 {len(cookie_headers)} 个独立cookie headers...")
+            
+            # 为每个独立cookie创建单独的header entry
+            for i, cookie_value in enumerate(cookie_headers):
+                cookie_key = f"cookie-{i}" if i > 0 else "cookie"  # 第一个保持原key，其他加索引
+                secret_headers[cookie_key] = cookie_value.strip()
+                print(f"🍪 secretParams.headers[{cookie_key}]: {cookie_value[:50]}... (长度: {len(cookie_value)})")
+            
+            print(f"🍪 ✅ convert_flow_to_attestor_params成功设置 {len(cookie_headers)} 个独立cookie")
+
+        # 🔧 处理其他敏感headers
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
-            if key_lower == 'cookie':
-                # 🔧 修复：对cookie进行URL编码，避免JSON转义问题
-                import urllib.parse
-                encoded_cookie = urllib.parse.quote(value, safe='=;, ')
-                secret_params['cookieStr'] = encoded_cookie
-                print(f"🔧 Cookie URL编码: {len(value)} -> {len(encoded_cookie)} 字符")
-            elif key_lower == 'authorization':
+            if key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
+                print(f"🔧 设置 secretParams.authorisationHeader: {value[:50]}...")
             else:
-                # 其他所有headers都移回params.headers，包括token_type等
-                params['headers'][key] = value
+                # 🔧 修复：其他认证headers保留在secretParams的headers字段中，不再移回params
+                secret_headers[key] = value
+                print(f"🔧 认证header归类到secretParams: {key}")
+
+        # 如果有认证headers（包括cookie），添加到secretParams
+        if secret_headers:
+            secret_params['headers'] = secret_headers
+            print(f"🔧 secretParams.headers包含 {len(secret_headers)} 个认证headers: {list(secret_headers.keys())}")
 
         # 构建最终结果
         result = {
@@ -251,10 +288,10 @@ class HttpToAttestorConverter:
         basic_headers: Dict[str, str] = {}
         sensitive_headers: Dict[str, str] = {}
 
-        # 现在只需要识别Cookie和Authorization，其他所有headers都保留在basic_headers中
+        # 🔧 修复：使用_is_authentication_header方法识别所有认证相关headers
         for key, value in headers.items():
             key_lower = key.lower()
-            if key_lower in {'cookie', 'authorization'}:
+            if key_lower in {'cookie', 'authorization'} or self._is_authentication_header(key):
                 sensitive_headers[key] = value
             else:
                 basic_headers[key] = value
@@ -284,6 +321,10 @@ class HttpToAttestorConverter:
             'x-csrf-token',         # CSRF令牌
             'x-xsrf-token',         # XSRF令牌
             'x-api-key',           # API密钥
+            # 🔧 修复：增加HSBC银行特有认证headers（基于001.json分析）
+            'x-hsbc-jsc-data',     # HSBC加密认证数据（关键）
+            'x-hsbc-client-id',    # HSBC客户端ID
+            'token_type',          # 令牌类型（SESSION_TOKEN等）
         }
 
         # 会话相关headers
@@ -424,21 +465,25 @@ class HttpToAttestorConverter:
 
         # 构建secretParams - 按照attestor-core的期望格式
         secret_params: Dict[str, Any] = {}
+        secret_headers: Dict[str, str] = {}  # 存放其他认证headers
 
-        # 只处理Cookie和Authorization，其他所有headers都保留在params.headers中
+        # 🔧 修复：正确处理所有敏感headers
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
             if key_lower == 'cookie':
-                # 🔧 修复：对cookie进行URL编码，避免JSON转义问题
-                import urllib.parse
-                encoded_cookie = urllib.parse.quote(value, safe='=;, ')
-                secret_params['cookieStr'] = encoded_cookie
-                print(f"🔧 Cookie URL编码: {len(value)} -> {len(encoded_cookie)} 字符")
+                # 🍪 使用统一的cookie处理方法
+                CookieHandler.process_cookie_for_secret_headers(key, value, secret_headers)
             elif key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
             else:
-                # 其他所有headers都移回params.headers，包括token_type等
-                params['headers'][key] = value
+                # 🔧 修复：其他认证headers保留在secretParams的headers字段中，不再移回params
+                secret_headers[key] = value
+                print(f"🔧 认证header归类到secretParams: {key}")
+
+        # 如果有其他认证headers，添加到secretParams
+        if secret_headers:
+            secret_params['headers'] = secret_headers
+            print(f"🔧 secretParams.headers包含 {len(secret_headers)} 个认证headers: {list(secret_headers.keys())}")
 
         # 构建最终结果
         result = {
@@ -477,6 +522,7 @@ class HttpToAttestorConverter:
 
     def _enforce_attestor_header_requirements(self, headers: Dict[str, str], body: str, host: str = None) -> None:
         """
+        🚫 临时禁用自动添加headers，用于403错误排查
         规范化并强制设置满足 attestor-core http provider 的头部要求：
         - 根据银行类型设置不同的headers策略
         - 确保HTTP协议必需的headers存在
@@ -490,91 +536,134 @@ class HttpToAttestorConverter:
         if not headers:
             return
 
-        print(f"🔍 _enforce_attestor_header_requirements 被调用")
-        print(f"🔍 当前headers: {list(headers.keys())}")
-
-        # 🏦 检测银行类型
-        bank_type = self._detect_bank_type(headers)
-
-        # 🔧 处理 Host 头部 - HTTP协议必需
+        # 🔧 参考pretest实现，只添加HTTP协议必需的标准headers
+        print(f"🔍 _enforce_attestor_header_requirements 被调用（仅添加必需标准headers）")
+        print(f"🔍 处理前headers: {list(headers.keys())}")
+        
+        # 🏠 添加Host header - HTTP/1.1协议必需
         if 'Host' not in headers and 'host' not in headers:
             if host:
                 headers['Host'] = host
                 print(f"🏠 添加必需的Host头: {host}")
             else:
-                print(f"⚠️ 警告: 无法获取Host信息，跳过添加Host头")
-
-        # 🔧 处理 Connection 头部
-        # 删除所有不同大小写的 connection 头
-        keys_to_delete = []
-        for k in list(headers.keys()):
-            if k.lower() == 'connection' and k != 'Connection':
-                keys_to_delete.append(k)
-        for k in keys_to_delete:
-            headers.pop(k, None)
-
-        # 根据银行类型设置 Connection
-        if 'Connection' not in headers:
-            if bank_type == 'cmb_wing_lung':
-                headers['Connection'] = 'keep-alive'
-                print(f"🏦 招商永隆银行，设置 Connection: keep-alive")
-            else:
-                headers['Connection'] = 'close'
-                print(f"🌐 其他银行，设置 Connection: close")
-
-        # 移除 Transfer-Encoding，避免与 Content-Length 冲突
-        for k in list(headers.keys()):
-            if k.lower() == 'transfer-encoding':
-                headers.pop(k, None)
-
-        # 同步 Content-Length 策略
+                print(f"⚠️ 无法添加Host头：host参数为空")
+        
+        # 🔗 添加Connection header - 确保连接行为一致
+        connection_keys = [k for k in headers.keys() if k.lower() == 'connection']
+        if not connection_keys:
+            headers['Connection'] = 'close'
+            print(f"🔗 添加Connection头: close")
+        else:
+            # 规范化为标准大小写
+            for k in connection_keys:
+                if k != 'Connection':
+                    value = headers.pop(k)
+                    headers['Connection'] = value
+                    print(f"🔗 规范化Connection头: {value}")
+        
+        # 📏 添加Content-Length header - 指定body长度
         body_str = body or ""
         body_len = len(body_str.encode('utf-8'))
-        # 规范化 Content-Length 大小写，并根据 body 设置
-        cl_keys = [k for k in list(headers.keys()) if k.lower() == 'content-length']
+        cl_keys = [k for k in headers.keys() if k.lower() == 'content-length']
+        
+        # 移除所有现有的content-length变体
         for k in cl_keys:
-            if k != 'Content-Length':
-                headers.pop(k, None)
-        # 为空体，强制为 0；非空体，如存在不一致则更新
-        if body_len == 0:
-            headers['Content-Length'] = '0'
-        else:
-            existing = headers.get('Content-Length')
-            if existing != str(body_len):
-                headers['Content-Length'] = str(body_len)
+            headers.pop(k, None)
+        
+        # 添加标准的Content-Length
+        headers['Content-Length'] = str(body_len)
+        print(f"📏 添加Content-Length头: {body_len}")
+        
+        print(f"🔍 处理后headers: {list(headers.keys())}")
+        print(f"✅ 标准headers添加完成")
 
-        # 🔧 处理 Accept-Encoding 头部
-        ae_keys = [k for k in list(headers.keys()) if k.lower() == 'accept-encoding']
+        # 以下代码暂时禁用，用于403错误排查
+        # print(f"🔍 _enforce_attestor_header_requirements 被调用")
+        # print(f"🔍 当前headers: {list(headers.keys())}")
 
-        # 规范化大小写，删除重复的 accept-encoding 头
-        original_value = None
-        for k in ae_keys:
-            if original_value is None:
-                original_value = headers[k]
-            if k != 'Accept-Encoding':
-                headers.pop(k, None)
+        # # 🏦 检测银行类型
+        # bank_type = self._detect_bank_type(headers)
 
-        # 根据银行类型设置 Accept-Encoding
-        if 'Accept-Encoding' not in headers:
-            if bank_type == 'cmb_wing_lung':
-                headers['Accept-Encoding'] = 'gzip, deflate, br, zstd'
-                print(f"🏦 招商永隆银行，设置 Accept-Encoding: gzip, deflate, br, zstd")
-            elif bank_type == 'hsbc':
-                # HSBC 保留原始值，如果没有原始值则不设置
-                if original_value:
-                    headers['Accept-Encoding'] = original_value
-                    print(f"🏦 HSBC 银行，保留原始 Accept-Encoding: {original_value}")
-                else:
-                    print(f"🏦 HSBC 银行，没有原始 Accept-Encoding，不设置默认值")
-            else:
-                headers['Accept-Encoding'] = 'identity'
-                print(f"🌐 其他银行，设置 Accept-Encoding: identity")
-        else:
-            # 如果已存在，根据银行类型决定是否保留
-            if bank_type == 'hsbc':
-                print(f"🏦 HSBC 银行，保留现有 Accept-Encoding: {headers['Accept-Encoding']}")
-            else:
-                print(f"🌐 其他银行，保留现有 Accept-Encoding: {headers['Accept-Encoding']}")
+        # # 🔧 处理 Host 头部 - HTTP协议必需
+        # if 'Host' not in headers and 'host' not in headers:
+        #     if host:
+        #         headers['Host'] = host
+        #         print(f"🏠 添加必需的Host头: {host}")
+        #     else:
+        #         print(f"⚠️ 警告: 无法获取Host信息，跳过添加Host头")
+
+        # # 🔧 处理 Connection 头部
+        # # 删除所有不同大小写的 connection 头
+        # keys_to_delete = []
+        # for k in list(headers.keys()):
+        #     if k.lower() == 'connection' and k != 'Connection':
+        #         keys_to_delete.append(k)
+        # for k in keys_to_delete:
+        #     headers.pop(k, None)
+
+        # # 根据银行类型设置 Connection
+        # if 'Connection' not in headers:
+        #     if bank_type == 'cmb_wing_lung':
+        #         headers['Connection'] = 'keep-alive'
+        #         print(f"🏦 招商永隆银行，设置 Connection: keep-alive")
+        #     else:
+        #         headers['Connection'] = 'close'
+        #         print(f"🌐 其他银行，设置 Connection: close")
+
+        # 🚫 以下代码暂时禁用，用于403错误排查
+        # # 移除 Transfer-Encoding，避免与 Content-Length 冲突
+        # for k in list(headers.keys()):
+        #     if k.lower() == 'transfer-encoding':
+        #         headers.pop(k, None)
+
+        # # 同步 Content-Length 策略
+        # body_str = body or ""
+        # body_len = len(body_str.encode('utf-8'))
+        # # 规范化 Content-Length 大小写，并根据 body 设置
+        # cl_keys = [k for k in list(headers.keys()) if k.lower() == 'content-length']
+        # for k in cl_keys:
+        #     if k != 'Content-Length':
+        #         headers.pop(k, None)
+        # # 为空体，强制为 0；非空体，如存在不一致则更新
+        # if body_len == 0:
+        #     headers['Content-Length'] = '0'
+        # else:
+        #     existing = headers.get('Content-Length')
+        #     if existing != str(body_len):
+        #         headers['Content-Length'] = str(body_len)
+
+        # # 🔧 处理 Accept-Encoding 头部
+        # ae_keys = [k for k in list(headers.keys()) if k.lower() == 'accept-encoding']
+
+        # # 规范化大小写，删除重复的 accept-encoding 头
+        # original_value = None
+        # for k in ae_keys:
+        #     if original_value is None:
+        #         original_value = headers[k]
+        #     if k != 'Accept-Encoding':
+        #         headers.pop(k, None)
+
+        # # 根据银行类型设置 Accept-Encoding
+        # if 'Accept-Encoding' not in headers:
+        #     if bank_type == 'cmb_wing_lung':
+        #         headers['Accept-Encoding'] = 'gzip, deflate, br, zstd'
+        #         print(f"🏦 招商永隆银行，设置 Accept-Encoding: gzip, deflate, br, zstd")
+        #     elif bank_type == 'hsbc':
+        #         # HSBC 保留原始值，如果没有原始值则不设置
+        #         if original_value:
+        #             headers['Accept-Encoding'] = original_value
+        #             print(f"🏦 HSBC 银行，保留原始 Accept-Encoding: {original_value}")
+        #         else:
+        #             print(f"🏦 HSBC 银行，没有原始 Accept-Encoding，不设置默认值")
+        #     else:
+        #         headers['Accept-Encoding'] = 'identity'
+        #         print(f"🌐 其他银行，设置 Accept-Encoding: identity")
+        # else:
+        #     # 如果已存在，根据银行类型决定是否保留
+        #     if bank_type == 'hsbc':
+        #         print(f"🏦 HSBC 银行，保留现有 Accept-Encoding: {headers['Accept-Encoding']}")
+        #     else:
+        #         print(f"🌐 其他银行，保留现有 Accept-Encoding: {headers['Accept-Encoding']}")
 
     def _detect_bank_type(self, headers: Dict[str, str]) -> str:
         """

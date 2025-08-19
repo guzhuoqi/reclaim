@@ -4,13 +4,16 @@ import { getAttestorClientFromPool } from 'src/client/utils/attestor-pool'
 import { DEFAULT_HTTPS_PORT, PROVIDER_CTX, TOPRF_DOMAIN_SEPARATOR } from 'src/config'
 import { ClaimTunnelRequest, ZKProofEngine } from 'src/proto/api'
 import { providers } from 'src/providers'
+import { generateMethod, generateHeader, generateBody } from 'http-to-curl'
 import type {
 	CreateClaimOnAttestorOpts,
 	IAttestorClient,
 	MessageRevealInfo,
 	ProviderName,
 	TOPRFProofParams,
-	Transcript
+	Transcript,
+	ProviderParams,
+	ProviderSecretParams
 } from 'src/types'
 import {
 	AttestorError,
@@ -228,7 +231,8 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		// @ts-ignore
 		secretParams,
 		params,
-		logger
+		logger,
+		selectedAlpn  // 🔧 传递协商的ALPN协议信息
 	)
 	const requestData = typeof requestStr === 'string'
 		? strToUint8Array(requestStr)
@@ -248,6 +252,9 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 	)
 
 	onStep?.({ name: 'sending-request-data' })
+
+	// 🎯 在实际发送HTTP请求前，生成curl格式输出方便比对
+	printCurlFormat(params, secretParams)
 
 	try {
 		if(redactionMode === 'zk') {
@@ -616,4 +623,117 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		return getAddress(pubKey)
 	}
 
+}
+
+/**
+ * 🎯 使用http-to-curl库生成标准curl格式输出，方便与浏览器请求比对
+ */
+function printCurlFormat<N extends ProviderName>(
+	params: ProviderParams<N>,
+	secretParams: ProviderSecretParams<N>
+) {
+	console.log('')
+	console.log('🌐 ===== CURL格式 (方便比对) =====')
+
+	try {
+		// 手动构建curl命令以确保完整性和准确性
+		const fullUrl = (params as any).url
+		const method = (params as any).method || 'GET'
+		
+		// 构建header对象
+		const allHeaders: Record<string, string> = {}
+
+		// 添加公开headers
+		if ((params as any).headers) {
+			Object.entries((params as any).headers).forEach(([key, value]) => {
+				allHeaders[key] = String(value)
+			})
+		}
+
+		// 添加私密headers（排除cookies）
+		if ((secretParams as any).headers) {
+			Object.entries((secretParams as any).headers).forEach(([key, value]) => {
+				if (!key.toLowerCase().startsWith('cookie')) {
+					allHeaders[key] = String(value)
+				}
+			})
+		}
+
+		// 添加Authorization header
+		if ((secretParams as any).authorisationHeader) {
+			allHeaders['authorization'] = (secretParams as any).authorisationHeader
+		}
+
+		// 收集所有cookies
+		const cookies: string[] = []
+
+		// 从secretParams.headers中收集cookies
+		if ((secretParams as any).headers) {
+			Object.entries((secretParams as any).headers).forEach(([key, value]) => {
+				if (key.toLowerCase().startsWith('cookie')) {
+					cookies.push(String(value))
+				}
+			})
+		}
+
+		// 从cookieStr中收集cookies（如果存在）
+		if ((secretParams as any).cookieStr) {
+			try {
+				const decodedCookie = Buffer.from((secretParams as any).cookieStr, 'base64').toString('utf-8')
+				cookies.push(decodedCookie)
+			} catch (error) {
+				cookies.push((secretParams as any).cookieStr)
+			}
+		}
+
+		// 合并cookies为单一cookie header（浏览器标准格式）
+		if (cookies.length > 0) {
+			allHeaders['cookie'] = cookies.join('; ')
+		}
+
+		// 手动构建curl命令
+		let curlCommand = `curl "${fullUrl}"`
+		
+		// 添加method（如果不是GET）
+		if (method.toUpperCase() !== 'GET') {
+			const methodPart = generateMethod({ method })
+			curlCommand += ` ${methodPart}`
+		}
+		
+		// 添加headers
+		Object.entries(allHeaders).forEach(([key, value]) => {
+			const headerPart = generateHeader({ headers: { [key]: value } })
+			if (headerPart && headerPart.params) {
+				curlCommand += ` ${headerPart.params}`
+			}
+		})
+
+		// 添加body（如果有）
+		if ((params as any).body) {
+			const bodyStr = typeof (params as any).body === 'string' 
+				? (params as any).body 
+				: new TextDecoder().decode((params as any).body)
+			if (bodyStr.trim()) {
+				const bodyPart = generateBody({ body: bodyStr })
+				if (bodyPart) {
+					curlCommand += ` ${bodyPart}`
+				}
+			}
+		}
+
+		console.log(curlCommand)
+		console.log('')
+		console.log(`📊 Headers统计: ${Object.keys(allHeaders).length}个`)
+		console.log(`🍪 Cookies统计: ${cookies.length}个`)
+		
+	} catch (error) {
+		console.log(`❌ 生成curl命令失败: ${error}`)
+		console.log('📋 请求参数:')
+		console.log(`   URL: ${(params as any).url}`)
+		console.log(`   Method: ${(params as any).method || 'GET'}`)
+		console.log(`   Headers: ${JSON.stringify((params as any).headers || {}, null, 2)}`)
+	}
+
+	console.log('🌐 ===== CURL格式结束 =====')
+	console.log('')
 }

@@ -14,8 +14,9 @@ export const DEFAULT_REMOTE_FILE_FETCH_BASE_URL = `${BROWSER_RPC_PATHNAME}/resou
 
 export const API_SERVER_PORT = 8001
 
-// 10s
-export const CONNECTION_TIMEOUT_MS = 10_000
+// 🔧 学习httpx成功配置：增加超时时间到30秒
+// 30s (与httpx的timeout=30.0保持一致)
+export const CONNECTION_TIMEOUT_MS = 30_000
 
 export const DNS_SERVERS = [
 	'8.8.8.8',

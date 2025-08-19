@@ -50,8 +50,8 @@ export function getBankCompatibleTlsOptions(): TLSConnectionOptions {
 	return {
 		cipherSuites: CHROME_LIKE_CIPHER_SUITES,
 		namedCurves: NAMED_CURVE_LIST,
-		// Chrome的ALPN协议顺序
-		applicationLayerProtocols: ['h2', 'http/1.1'],
+		// 🔧 ALPN协商降级测试：强制使用HTTP/1.1，测试TLS指纹是否解决了CloudFront问题
+		applicationLayerProtocols: ['http/1.1'],  // 仅HTTP/1.1，避免协议解析复杂性
 		// 🏦 模拟Chrome的TLS行为特征（更多配置可能需要在更底层实现）
 	}
 }

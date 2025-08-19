@@ -98,7 +98,8 @@ export interface Provider<
   createRequest(
     secretParams: SecretParams,
     params: Params,
-    logger: Logger
+    logger: Logger,
+    selectedAlpn?: string
   ): CreateRequestResult
   /**
    * Return the slices of the response to redact

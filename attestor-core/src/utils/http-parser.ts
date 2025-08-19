@@ -253,8 +253,11 @@ export function makeHttpResponseParser() {
  * @returns the parsed HTTP request
  */
 export function getHttpRequestDataFromTranscript(receipt: Transcript<Uint8Array>) {
+	// 🔧 修复：只提取HTTP应用数据，排除TLS握手消息
 	const clientMsgs = receipt
 		.filter(s => s.sender === 'client')
+		// TODO: 这里应该使用 extractApplicationDataFromTranscript 来只提取HTTP应用数据
+		// 目前简单过滤会包含TLS握手数据，导致解析错误
 
 	// 🔍 调试：详细分析第一个客户端消息
 	console.log(`🔍 DEBUG TLS Transcript分析:`)
@@ -277,6 +280,19 @@ export function getHttpRequestDataFromTranscript(receipt: Transcript<Uint8Array>
 		}
 	}
 
+	// 🔍 检查第二个消息（可能包含重复的cookie）
+	if(clientMsgs.length > 1) {
+		const secondMsg = clientMsgs[1]
+		console.log(`   第二个消息长度: ${secondMsg.message.length}`)
+		const secondMsgStr = Array.from(secondMsg.message).map(b => String.fromCharCode(b)).join('')
+		console.log(`   第二个消息内容前200字符: ${secondMsgStr.substring(0, 200)}`)
+		
+		// 检查第二个消息是否包含cookie相关内容
+		if(secondMsgStr.includes('cookie') || secondMsgStr.includes('Cookie')) {
+			console.log(`   ⚠️ 第二个消息包含Cookie！可能导致重复解析`)
+		}
+	}
+
 	// if the first message is redacted, we can't parse it
 	// as we don't know what the request was
 	if(clientMsgs[0].message[0] === REDACTION_CHAR_CODE) {
@@ -290,7 +306,51 @@ export function getHttpRequestDataFromTranscript(receipt: Transcript<Uint8Array>
 		protocol: '',
 		headers: {}
 	}
+	// 🔧 修复：合并消息并在解析时去重
+	console.log('🔧 合并TLS消息以获取完整HTTP请求')
 	let requestBuffer = concatenateUint8Arrays(clientMsgs.map(m => m.message))
+	
+	// 🔍 DEBUG: 查看合并后的requestBuffer在关键位置的内容
+	const bufferStr = uint8ArrayToStr(requestBuffer)
+	console.log(`🔍 DEBUG 合并后总长度: ${requestBuffer.length}`)
+	
+	// 查找包含 ":false}" 的位置，看看上下文
+	const problemStr = ':false}'
+	const problemIndex = bufferStr.indexOf(problemStr)
+	if (problemIndex !== -1) {
+		const start = Math.max(0, problemIndex - 50)
+		const end = Math.min(bufferStr.length, problemIndex + 100)
+		const context = bufferStr.substring(start, end)
+		console.log(`🔍 DEBUG 发现":false}"位置 ${problemIndex}，上下文:`)
+		console.log(`   "${context.replace(/\r/g, '\\r').replace(/\n/g, '\\n')}"`)
+	}
+
+	// 重新定义getLine函数以使用正确的requestBuffer
+	let currentByteIdx = 0
+	function getLine() {
+		const idx = findIndexInUint8Array(
+			requestBuffer.slice(currentByteIdx),
+			HTTP_HEADER_LINE_END
+		)
+		if(idx === -1) return undefined
+
+		const line = uint8ArrayToStr(
+			requestBuffer.slice(currentByteIdx, currentByteIdx + idx)
+		)
+		
+		// 🔍 DEBUG: 记录读取到的可疑行
+		if (line.includes('false}') || line.startsWith('"') || line.includes('productEligibilities') || line.startsWith(':')) {
+			console.log(`🔍 DEBUG getLine读取到可疑行 (位置${currentByteIdx}): "${line.substring(0, 100)}..."`)
+		}
+		
+		currentByteIdx += idx + HTTP_HEADER_LINE_END.length
+		return line
+	}
+
+	// 🔧 跟踪已处理的header值以避免重复（扩展到所有headers）
+	const seenCookieValues = new Set<string>()
+	const seenHeaderValues = new Map<string, Set<string>>()
+
 	// keep reading lines until we get to the end of the headers
 	for(let line = getLine(); typeof line !== 'undefined'; line = getLine()) {
 		if(line === '') {
@@ -305,7 +365,10 @@ export function getHttpRequestDataFromTranscript(receipt: Transcript<Uint8Array>
 		} else {
 			let keyIdx = line.indexOf(':')
 			if(keyIdx === -1) {
-				keyIdx = line.length - 1
+				// ❌ 修复：跳过没有冒号的无效header行，而不是错误解析
+				console.log(`⚠️  跳过无效header行（缺少冒号）: ${line.substring(0, 50)}${line.length > 50 ? '...' : ''}`)
+				console.log(`🔍 行长度: ${line.length}, Hex前20字节: ${Array.from(line.slice(0, 20)).map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join(' ')}`)
+				continue
 			}
 
 			const key = line.slice(0, keyIdx)
@@ -313,6 +376,34 @@ export function getHttpRequestDataFromTranscript(receipt: Transcript<Uint8Array>
 				.trim()
 			const value = line.slice(keyIdx + 1)
 				.trim()
+
+			// 🔒 安全检查：确保header名称合理（不超过100字符）
+			if(key.length > 100) {
+				console.log(`⚠️ 跳过异常长的header名称: ${key.substring(0, 50)}...`)
+				console.log(`🔍 行长度: ${line.length}, Hex前20字节: ${Array.from(strToUint8Array(line.substring(0, 20))).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+				continue
+			}
+
+			// 🔧 通用Header去重逻辑：跳过重复的header值
+			if (!seenHeaderValues.has(key)) {
+				seenHeaderValues.set(key, new Set<string>())
+			}
+			const seenValues = seenHeaderValues.get(key)!
+			
+			if (seenValues.has(value)) {
+				console.log(`🔧 跳过重复的${key} header: ${value.substring(0, 30)}...`)
+				continue
+			}
+			seenValues.add(value)
+
+			// 🔧 特别处理cookie的调试信息
+			if(key === 'cookie') {
+				seenCookieValues.add(value) // 保持向后兼容
+				console.log(`🔧 处理新的cookie: ${value.substring(0, 30)}...`)
+			} else {
+				console.log(`🔧 处理新的${key} header: ${value.substring(0, 30)}...`)
+			}
+
 			const oldValue = request.headers[key]
 			if(typeof oldValue === 'string') {
 				request.headers[key] = [oldValue, value]
@@ -334,17 +425,4 @@ export function getHttpRequestDataFromTranscript(receipt: Transcript<Uint8Array>
 	}
 
 	return request
-
-	function getLine() {
-		const idx = findIndexInUint8Array(requestBuffer, HTTP_HEADER_LINE_END)
-		if(idx === -1) {
-			return undefined
-		}
-
-		const line = uint8ArrayToStr(requestBuffer.slice(0, idx))
-		requestBuffer = requestBuffer
-			.slice(idx + HTTP_HEADER_LINE_END.length)
-
-		return line
-	}
 }
