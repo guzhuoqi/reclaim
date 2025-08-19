@@ -79,7 +79,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 
 
 	createRequest(secretParams, params, logger, selectedAlpn?) {
-		// 🍪 修复：适应独立cookie headers格式，不再强制要求cookieStr
+		// 🍪 修复：支持cookieStr格式，同时兼容独立cookie headers格式
 		const hasCookies = secretParams.cookieStr || (secretParams.headers && Object.keys(secretParams.headers).some(k => k.toLowerCase() === 'cookie'))
 		if(
 			!hasCookies &&
@@ -97,7 +97,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		// 统计所有headers数量（包括公开和私密的）
 		const pubHeaders = params.headers || {}
 		const secHeadersCount = secretParams.headers ? Object.keys(secretParams.headers).length : 0
-		// 🍪 修复：适应独立cookie headers，不再单独统计cookieStr
+		// 🍪 修复：统计cookieStr（如果存在的话）
 		const cookieCount = secretParams.cookieStr ? 1 : 0
 		const authCount = secretParams.authorisationHeader ? 1 : 0
 		const totalHeadersCount = Object.keys(pubHeaders).length + secHeadersCount + cookieCount + authCount
@@ -152,12 +152,19 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		console.log(`🔍 ATTESTOR-CORE总headers数: ${totalHeadersCount} (公开: ${Object.keys(pubHeaders).length}, 私密: ${secHeadersCount + cookieCount + authCount})`)
 
 		const secHeaders = { ...secretParams.headers }
-	// 🍪 修复：禁用旧cookieStr处理，只使用独立cookie headers格式
+	// 🍪 修复：重新启用cookieStr处理（Python脚本现在生成cookieStr而不是独立headers）
 	if(secretParams.cookieStr) {
-		console.log('🍪 检测到旧cookieStr格式，但已禁用（使用独立cookie headers）')
+		// 解码cookie（如果是base64编码的话）
+		try {
+			const decodedCookie = Buffer.from(secretParams.cookieStr, 'base64').toString('utf-8')
+			secHeaders['Cookie'] = decodedCookie
+			console.log('🍪 使用cookieStr格式（base64解码）')
+		} catch (error) {
+			// 如果不是base64编码，直接使用
+			secHeaders['Cookie'] = secretParams.cookieStr
+			console.log('🍪 使用cookieStr格式（原始字符串）')
+		}
 	}
-	// 🍪 新格式：独立cookie headers已经在secretParams.headers中，无需额外处理
-	console.log('🍪 使用独立cookie headers格式')
 
 		if(secretParams.authorisationHeader) {
 			secHeaders['Authorization'] = secretParams.authorisationHeader
@@ -356,19 +363,42 @@ const HTTP_PROVIDER: Provider<'http'> = {
 
 
 
-		// hide all secret headers
-		const secHeadersStr = secHeadersList.join('\r\n')
-		const tokenStartIndex = findIndexInUint8Array(
-			data,
-			strToUint8Array(secHeadersStr)
-		)
-
-		const redactions = [
-			{
-				fromIndex: tokenStartIndex,
-				toIndex: tokenStartIndex + secHeadersStr.length,
+		// 🔧 修复：逐个redact secret headers，避免redact整个HTTP请求开头
+		console.log(`🔧 开始逐个redact ${secHeadersList.length} 个secret headers...`)
+		const redactions: RedactedOrHashedArraySlice[] = []
+		
+		for (let i = 0; i < secHeadersList.length; i++) {
+			const header = secHeadersList[i]
+			const headerBytes = strToUint8Array(header)
+			const headerStartIndex = findIndexInUint8Array(data, headerBytes)
+			
+			if (headerStartIndex !== -1) {
+				// 只redact header的值部分，保留"key: "部分
+				const colonIndex = header.indexOf(': ')
+				if (colonIndex !== -1) {
+					const keyPart = header.substring(0, colonIndex + 2) // "key: "
+					const valuePart = header.substring(colonIndex + 2) // value部分
+					const valueStartIndex = headerStartIndex + keyPart.length
+					
+					redactions.push({
+						fromIndex: valueStartIndex,
+						toIndex: valueStartIndex + valuePart.length,
+					})
+					console.log(`🔧 Redact header值: ${header.substring(0, colonIndex)} (${valuePart.length} 字节)`)
+				} else {
+					// 如果没有找到冒号，redact整个header（fallback）
+					redactions.push({
+						fromIndex: headerStartIndex,
+						toIndex: headerStartIndex + header.length,
+					})
+					console.log(`🔧 Redact整个header: ${header.substring(0, 50)}...`)
+				}
+			} else {
+				console.log(`⚠️ 未找到header在请求中的位置: ${header.substring(0, 50)}...`)
 			}
-		]
+		}
+		
+		console.log(`🔧 总共设置${redactions.length}个redaction区间`)
 
 		if(newParams.hiddenBodyParts?.length > 0) {
 			for(const hiddenBodyPart of newParams.hiddenBodyParts) {

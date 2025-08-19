@@ -159,17 +159,25 @@ class HttpToAttestorConverter:
         secret_params: Dict[str, Any] = {}
         secret_headers: Dict[str, str] = {}  # 存放其他认证headers
 
-        # 🍪 关键修复：处理独立的cookie headers（模仿001.json成功模式）
+        # 🍪 关键修复：使用CookieHandler的Legacy格式合并cookie到cookieStr
         if cookie_headers:
-            print(f"🍪 convert_flow_to_attestor_params开始处理 {len(cookie_headers)} 个独立cookie headers...")
+            print(f"🍪 convert_flow_to_attestor_params开始处理 {len(cookie_headers)} 个cookie headers...")
             
-            # 为每个独立cookie创建单独的header entry
-            for i, cookie_value in enumerate(cookie_headers):
-                cookie_key = f"cookie-{i}" if i > 0 else "cookie"  # 第一个保持原key，其他加索引
-                secret_headers[cookie_key] = cookie_value.strip()
-                print(f"🍪 secretParams.headers[{cookie_key}]: {cookie_value[:50]}... (长度: {len(cookie_value)})")
+            # 将所有cookie合并成一个完整的cookie字符串（HTTP标准格式）
+            all_cookies = []
+            for cookie_value in cookie_headers:
+                all_cookies.append(cookie_value.strip())
             
-            print(f"🍪 ✅ convert_flow_to_attestor_params成功设置 {len(cookie_headers)} 个独立cookie")
+            # 使用分号和空格连接所有cookies
+            combined_cookie_str = '; '.join(all_cookies)
+            
+            # 使用CookieHandler的Legacy格式（Base64编码，命令行安全）
+            CookieHandler.process_cookie_for_secret_params(
+                'Cookie', combined_cookie_str, secret_params, use_legacy_format=True
+            )
+            
+            print(f"🍪 ✅ 合并{len(cookie_headers)}个cookie到cookieStr (Base64编码)")
+            print(f"🍪 原始cookie总长度: {len(combined_cookie_str)} 字符")
 
         # 🔧 处理其他敏感headers
         for key, value in sensitive_headers.items():
@@ -471,8 +479,11 @@ class HttpToAttestorConverter:
         for key, value in sensitive_headers.items():
             key_lower = key.lower()
             if key_lower == 'cookie':
-                # 🍪 使用统一的cookie处理方法
-                CookieHandler.process_cookie_for_secret_headers(key, value, secret_headers)
+                # 🍪 使用CookieHandler的Legacy格式（Base64编码cookieStr）
+                CookieHandler.process_cookie_for_secret_params(
+                    key, value, secret_params, use_legacy_format=True
+                )
+                print(f"🍪 使用CookieHandler Legacy格式处理cookie (Base64编码)")
             elif key_lower == 'authorization':
                 secret_params['authorisationHeader'] = value
             else:
@@ -762,9 +773,9 @@ class HttpToAttestorConverter:
             (name, params_json, secret_params_json) 元组
         """
         name = attestor_params.get("name", "http")
-        # 🔧 修复JSON转义问题：确保不会对cookie中的JSON进行过度转义
-        params_json = json.dumps(attestor_params.get("params", {}), ensure_ascii=False, separators=(',', ':'))
-        secret_params_json = json.dumps(attestor_params.get("secretParams", {}), ensure_ascii=False, separators=(',', ':'))
+        # 🔧 修复命令行兼容性：Base64编码的cookieStr使用ASCII编码确保shell安全
+        params_json = json.dumps(attestor_params.get("params", {}), ensure_ascii=True, separators=(',', ':'))
+        secret_params_json = json.dumps(attestor_params.get("secretParams", {}), ensure_ascii=True, separators=(',', ':'))
 
         return name, params_json, secret_params_json
 
@@ -787,11 +798,15 @@ class HttpToAttestorConverter:
         """
         name, params_json, secret_params_json = self.format_for_command_line(attestor_params)
 
+        # 🔧 修复：使用双引号包围JSON参数并转义内部双引号，确保Base64 cookieStr安全传递
+        params_escaped = params_json.replace('"', '\\"')
+        secret_params_escaped = secret_params_json.replace('"', '\\"')
+        
         command = (
             f'PRIVATE_KEY={private_key} npm run create:claim -- '
             f'--name "{name}" '
-            f'--params \'{params_json}\' '
-            f'--secretParams \'{secret_params_json}\' '
+            f'--params "{params_escaped}" '
+            f'--secretParams "{secret_params_escaped}" '
             f'--attestor {attestor}'
         )
 

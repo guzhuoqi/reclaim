@@ -296,20 +296,25 @@ class SessionBasedMatcher:
         # 构建secretParams - 按照attestor-core的期望格式
         secret_params = {}
 
-        # 🍪 关键修复：处理独立的cookie headers（模仿001.json成功模式）
+        # 🍪 关键修复：使用CookieHandler的Legacy格式合并cookie到cookieStr（Base64编码，命令行安全）
         if cookie_headers:
-            if 'headers' not in secret_params:
-                secret_params['headers'] = {}
+            print(f"🍪 开始处理 {len(cookie_headers)} 个cookie headers...")
             
-            print(f"🍪 开始处理 {len(cookie_headers)} 个独立cookie headers...")
+            # 将所有cookie合并成一个完整的cookie字符串（HTTP标准格式）
+            all_cookies = []
+            for cookie_value in cookie_headers:
+                all_cookies.append(cookie_value.strip())
             
-            # 为每个独立cookie创建单独的header entry
-            for i, cookie_value in enumerate(cookie_headers):
-                cookie_key = f"cookie-{i}" if i > 0 else "cookie"  # 第一个保持原key，其他加索引
-                secret_params['headers'][cookie_key] = cookie_value.strip()
-                print(f"🍪 secretParams.headers[{cookie_key}]: {cookie_value[:50]}... (长度: {len(cookie_value)})")
+            # 使用分号和空格连接所有cookies
+            combined_cookie_str = '; '.join(all_cookies)
             
-            print(f"🍪 ✅ 成功设置 {len(cookie_headers)} 个独立cookie到secretParams.headers")
+            # 使用CookieHandler的Legacy格式（Base64编码，命令行安全）
+            CookieHandler.process_cookie_for_secret_params(
+                'Cookie', combined_cookie_str, secret_params, use_legacy_format=True
+            )
+            
+            print(f"🍪 ✅ 合并{len(cookie_headers)}个cookie到cookieStr (Base64编码)")
+            print(f"🍪 原始cookie总长度: {len(combined_cookie_str)} 字符")
         
         # 处理其他sensitive headers（Authorization等）
         for key, value in sensitive_headers.items():
