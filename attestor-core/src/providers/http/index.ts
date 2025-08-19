@@ -62,11 +62,9 @@ const HTTP_PROVIDER: Provider<'http'> = {
 
 		// 🏦 如果是HSBC银行，也使用Chrome兼容的TLS配置
 		if (isHSBCBank) {
-			defaultOptions = {
-				...defaultOptions,
-				...getBankCompatibleTlsOptions()
-			}
-			console.log(`🏦 应用银行兼容TLS配置 - HSBC`)
+			// 🔧 完全替换配置，确保银行配置优先级最高
+			defaultOptions = getBankCompatibleTlsOptions()
+			console.log(`🏦 应用银行兼容TLS配置 - HSBC (强制TLS1.2)`)
 		}
 
 		if('additionalClientOptions' in params) {
@@ -175,6 +173,17 @@ const HTTP_PROVIDER: Provider<'http'> = {
 			logger.warn('No User-Agent provided - request may be blocked by some services')
 		}
 
+		// 🔧 修复400错误：添加Host header（curl自动添加，我们需要手动添加）
+		const hasHost = Object.keys(pubHeaders)
+			.some(k => k.toLowerCase() === 'host') ||
+            Object.keys(secHeaders)
+            	.some(k => k.toLowerCase() === 'host')
+		if(!hasHost) {
+			const url = new URL(params.url)
+			pubHeaders['host'] = url.host
+			console.log(`🔧 添加Host header: ${url.host}`)
+		}
+
 		const newParams = substituteParamValues(params, secretParams)
 		params = newParams.newParams
 
@@ -222,8 +231,8 @@ const HTTP_PROVIDER: Provider<'http'> = {
 				
 				const keyLower = key.toLowerCase()
 				
-				// 过滤技术性headers (学习001.json成功模式)
-				if (keyLower === 'connection' || keyLower === 'host' || keyLower === 'content-length') {
+				// 过滤技术性headers (学习001.json成功模式) - 但保留host header
+				if (keyLower === 'connection' || keyLower === 'content-length') {
 					console.log(`🔧 过滤技术性header: ${key}`)
 					return
 				}
@@ -260,12 +269,13 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		// 再处理私密headers
 		processHeaders(secHeaders, true)
 		
-		// 🍪 按顺序添加所有cookie headers
-		cookieValues.forEach((value, index) => {
-			const cookieHeaderStr = `Cookie: ${value}`
+		// 🍪 修复：合并所有cookies为单一cookie header（参考printCurlFormat的正确做法）
+		if (cookieValues.length > 0) {
+			const mergedCookies = cookieValues.join('; ')
+			const cookieHeaderStr = `cookie: ${mergedCookies}`
 			orderedHeaders.push(cookieHeaderStr)
-			console.log(`🍪 设置cookie[${index}]: ${value.substring(0, 50)}...`)
-		})
+			console.log(`🍪 合并${cookieValues.length}个cookies为单一header: ${mergedCookies.substring(0, 100)}...`)
+		}
 		
 		// 🔧 最后添加priority header（学习001.json成功模式）
 		if (priorityHeader) {
@@ -302,8 +312,12 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		const headerStr = strToUint8Array(httpReqHeaderStr)
 		let data = concatenateUint8Arrays([headerStr, body])
 		
-		// 🔧 HTTP/2协议适配
-		if (isHTTP2Protocol(selectedAlpn)) {
+		// 🔧 修复400错误：检测HSBC银行并禁用HTTP/2转换
+		const isHSBCBank = params.url?.includes('hsbc.com.hk')
+		
+		if (isHSBCBank && isHTTP2Protocol(selectedAlpn)) {
+			console.log(`🏦 HSBC检测到HTTP/2协商，但强制降级到HTTP/1.1以避免400错误`)
+		} else if (isHTTP2Protocol(selectedAlpn)) {
 			console.log(`🌐 检测到HTTP/2协议，转换请求格式...`)
 			
 			try {

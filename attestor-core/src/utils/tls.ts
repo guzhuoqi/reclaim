@@ -45,13 +45,24 @@ export function getDefaultTlsOptions(): TLSConnectionOptions {
 	}
 }
 
-// 🏦 获取银行兼容的TLS配置
+// 🏦 获取银行兼容的TLS配置（优化版，避免400错误）
 export function getBankCompatibleTlsOptions(): TLSConnectionOptions {
 	return {
-		cipherSuites: CHROME_LIKE_CIPHER_SUITES,
-		namedCurves: NAMED_CURVE_LIST,
-		// 🔧 ALPN协商降级测试：强制使用HTTP/1.1，测试TLS指纹是否解决了CloudFront问题
-		applicationLayerProtocols: ['http/1.1'],  // 仅HTTP/1.1，避免协议解析复杂性
-		// 🏦 模拟Chrome的TLS行为特征（更多配置可能需要在更底层实现）
+		// 🔧 修复HSBC 400错误：强制使用TLS1.2，避免TLS1.3指纹检测
+		supportedProtocolVersions: ['TLS1_2'],
+		// 🔧 使用更保守的密码套件选择，只使用TLS1.2套件（更接近curl行为）
+		cipherSuites: [
+			// 只使用TLS1.2套件，完全避免TLS1.3
+			'TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256',  // 银行最常用
+			'TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256',
+			'TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384',
+			'TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384',
+			// 完全移除所有TLS1.3套件，避免指纹检测
+		],
+		// 🔧 使用更保守的椭圆曲线，避免X25519（可能被检测）
+		namedCurves: ['SECP256R1', 'SECP384R1'],
+		// 🔧 强制HTTP/1.1，避免协议协商和转换问题
+		applicationLayerProtocols: ['http/1.1'],
+		// 🏦 模拟curl的TLS行为特征（更多配置可能需要在更底层实现）
 	}
 }

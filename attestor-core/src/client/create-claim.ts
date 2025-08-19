@@ -108,7 +108,10 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		params,
 		provider.additionalClientOptions
 	)
-	const tlsOpts = { ...getDefaultTlsOptions(), ...providerTlsOpts }
+	// 🔧 修复银行TLS配置：如果provider提供了完整配置，优先使用provider配置
+	const tlsOpts = providerTlsOpts && Object.keys(providerTlsOpts).length > 0
+		? { ...getDefaultTlsOptions(), ...providerTlsOpts }
+		: getDefaultTlsOptions()
 	const { zkEngine = 'snarkjs' } = zkOpts
 
 	let redactionMode = getProviderValue(params, provider.writeRedactionMode)
@@ -232,7 +235,7 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		secretParams,
 		params,
 		logger,
-		selectedAlpn  // 🔧 传递协商的ALPN协议信息
+		selectedAlpn
 	)
 	const requestData = typeof requestStr === 'string'
 		? strToUint8Array(requestStr)
@@ -242,6 +245,22 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		{ redactions: redactions.length },
 		'generated request'
 	)
+
+	// 🔍 DEBUG: 输出生成的原始HTTP请求内容
+	console.log('🔍 DEBUG 生成的原始HTTP请求:')
+	console.log('='.repeat(50))
+	const actualRequest = typeof requestStr === 'string' ? requestStr : uint8ArrayToStr(requestData)
+	console.log(actualRequest)
+	console.log('='.repeat(50))
+
+	// 🔍 DEBUG: 分析cookie header格式
+	const requestLines = actualRequest.split('\r\n')
+	const cookieLines = requestLines.filter(line => line.toLowerCase().startsWith('cookie:'))
+	console.log(`🔍 DEBUG Cookie分析:`)
+	console.log(`   Cookie headers数量: ${cookieLines.length}`)
+	cookieLines.forEach((line, i) => {
+		console.log(`   Cookie[${i}]: ${line.substring(0, 100)}...`)
+	})
 
 	const waitForAllData = new Promise<void>(
 		(resolve, reject) => {
@@ -639,7 +658,7 @@ function printCurlFormat<N extends ProviderName>(
 		// 手动构建curl命令以确保完整性和准确性
 		const fullUrl = (params as any).url
 		const method = (params as any).method || 'GET'
-		
+
 		// 构建header对象
 		const allHeaders: Record<string, string> = {}
 
@@ -693,13 +712,13 @@ function printCurlFormat<N extends ProviderName>(
 
 		// 手动构建curl命令
 		let curlCommand = `curl "${fullUrl}"`
-		
+
 		// 添加method（如果不是GET）
 		if (method.toUpperCase() !== 'GET') {
 			const methodPart = generateMethod({ method })
 			curlCommand += ` ${methodPart}`
 		}
-		
+
 		// 添加headers
 		Object.entries(allHeaders).forEach(([key, value]) => {
 			const headerPart = generateHeader({ headers: { [key]: value } })
@@ -710,8 +729,8 @@ function printCurlFormat<N extends ProviderName>(
 
 		// 添加body（如果有）
 		if ((params as any).body) {
-			const bodyStr = typeof (params as any).body === 'string' 
-				? (params as any).body 
+			const bodyStr = typeof (params as any).body === 'string'
+				? (params as any).body
 				: new TextDecoder().decode((params as any).body)
 			if (bodyStr.trim()) {
 				const bodyPart = generateBody({ body: bodyStr })
@@ -725,7 +744,7 @@ function printCurlFormat<N extends ProviderName>(
 		console.log('')
 		console.log(`📊 Headers统计: ${Object.keys(allHeaders).length}个`)
 		console.log(`🍪 Cookies统计: ${cookies.length}个`)
-		
+
 	} catch (error) {
 		console.log(`❌ 生成curl命令失败: ${error}`)
 		console.log('📋 请求参数:')
