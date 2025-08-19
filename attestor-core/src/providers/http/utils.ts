@@ -334,7 +334,16 @@ export function makeRegex(str: string) {
 		return RE2(str, 'sgiu')
 	}
 
-	return new RegExp(str, 'sgi')
+	// 🔧 修复：当RE2不可用时，转换Python风格的命名捕获组为JavaScript兼容格式
+	// 将 (?P<name>...) 转换为 (?<name>...)
+	const convertedStr = str.replace(/\(\?P<([^>]+)>/g, '(?<$1>')
+	
+	console.log('⚠️ RE2 not found. Using standard regex with Python-to-JS conversion')
+	if (convertedStr !== str) {
+		console.log(`🔧 转换Python风格正则: "${str}" -> "${convertedStr}"`)
+	}
+
+	return new RegExp(convertedStr, 'sgi')
 }
 
 const TEMPLATE_START_CHARCODE = '{'.charCodeAt(0)
