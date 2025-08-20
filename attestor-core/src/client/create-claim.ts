@@ -218,6 +218,7 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 	// 🔗 TLS连接成功日志
 	console.log(`✅ TLS连接建立成功`)
 	console.log(`🔐 TLS版本: ${tlsVersion}`)
+	console.log(`⏱️ TLS连接建立时间: ${new Date().toISOString()}`)
 	console.log(`🔒 密码套件: ${cipherSuite}`)
 	console.log(`🌐 协商的ALPN: ${selectedAlpn || '无'}`)
 	console.log(`📊 传输记录数: ${tunnel.transcript.length}条`)
@@ -264,9 +265,10 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 
 	const waitForAllData = new Promise<void>(
 		(resolve, reject) => {
-			endedHttpRequest = err => (
+			endedHttpRequest = err => {
+				console.log(`⏱️ HTTP请求完成时间: ${new Date().toISOString()}`)
 				err ? reject(err) : resolve()
-			)
+			}
 		}
 	)
 
@@ -295,9 +297,11 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 	}
 
 	onStep?.({ name: 'waiting-for-response' })
+	console.log(`⏱️ 开始等待HTTP响应: ${new Date().toISOString()}`)
 
 	await waitForAllData
 	await tunnel.close()
+	console.log(`⏱️ TLS会话关闭完成: ${new Date().toISOString()}`)
 
 	logger.info('session closed, processing response')
 
@@ -345,6 +349,7 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 	})
 
 	onStep?.({ name: 'waiting-for-verification' })
+	console.log(`⏱️ 开始生成ZK证明和验证: ${new Date().toISOString()}`)
 
 	const claimTunnelBytes = ClaimTunnelRequest
 		.encode(claimTunnelReq).finish()
@@ -352,7 +357,9 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		.sign(claimTunnelBytes, ownerPrivateKey)
 	claimTunnelReq.signatures = { requestSignature }
 
+	console.log(`⏱️ 发送claimTunnel请求: ${new Date().toISOString()}`)
 	const result = await client!.rpc('claimTunnel', claimTunnelReq)
+	console.log(`⏱️ 收到claimTunnel响应: ${new Date().toISOString()}`)
 
 	logger.info({ success: !!result.claim }, 'recv claim response')
 
@@ -469,6 +476,7 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 						proofsTotal: total,
 						approxTimeLeftS: Math.round(timeLeftMs / 1000),
 					})
+					console.log(`⏱️ ZK证明进度: ${done}/${total}, 预计剩余时间: ${Math.round(timeLeftMs / 1000)}秒`)
 				},
 				...zkOpts,
 			}
