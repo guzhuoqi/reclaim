@@ -62,7 +62,7 @@ class AttestorExecutor:
     def __init__(self, api_host: str = "localhost", api_port: int = 3000, max_workers: int = 3,
                  use_zkme_express: bool = False, zkme_base_url: str = "https://test-exp.bitkinetic.com",
                  queue_size: Optional[int] = None,
-                 use_wss_attestor: bool = False, wss_attestor_url: Optional[str] = None, request_timeout: int = 180,
+                 use_wss_attestor: bool = False, wss_attestor_url: Optional[str] = None, request_timeout: int = 600,
                  attestor_host_port: Optional[str] = None):
         self.api_host = api_host
         self.api_port = api_port
@@ -443,8 +443,8 @@ class AttestorExecutor:
                     print(f"   ⚠️ psutil 不可用，跳过进程监控")
 
                 # 使用 communicate() 获取完整输出，无大小限制
-                print(f"   ⏳ 等待进程完成 (超时: 180秒)...")
-                stdout, stderr = process.communicate(timeout=180)
+                print(f"   ⏳ 等待进程完成 (超时: {self.request_timeout}秒)...")
+                stdout, stderr = process.communicate(timeout=self.request_timeout)
 
                 # 创建兼容的 result 对象
                 class PopenResult:
@@ -462,7 +462,7 @@ class AttestorExecutor:
                 stdout, stderr = process.communicate()
                 result = PopenResult(process.returncode, stdout, stderr)
                 print(f"   💀 进程已终止: stdout={len(stdout)} 字符, stderr={len(stderr)} 字符")
-                raise subprocess.TimeoutExpired(cmd_str, 180)
+                raise subprocess.TimeoutExpired(cmd_str, self.request_timeout)
 
             execution_time = time.time() - start_time
 
@@ -722,7 +722,7 @@ class AttestorForwardingAddon:
                 "attestor_core_path": "../attestor-core",
                 "max_workers": 3,
                 "queue_size": 10,
-                "request_timeout": 180,
+                "request_timeout": 600,
                 # 执行模式：blocking_ack（202 返回）/ non_blocking（直通上游，推荐默认）
                 "execution_mode": "blocking_ack",
                 # 是否在请求与响应上附带任务ID头，便于链路追踪
@@ -788,7 +788,7 @@ class AttestorForwardingAddon:
         zkme_base_url = self.config.get("global_settings", {}).get("zkme_base_url", "https://test-exp.bitkinetic.com")
         use_wss_attestor = self.config.get("global_settings", {}).get("use_wss_attestor", False)
         wss_attestor_url = self.config.get("global_settings", {}).get("wss_attestor_url", None)
-        request_timeout = self.config.get("global_settings", {}).get("request_timeout", 180)
+        request_timeout = self.config.get("global_settings", {}).get("request_timeout", 600)
 
         try:
             self.executor = AttestorExecutor(
@@ -1560,70 +1560,6 @@ class AttestorForwardingAddon:
         elif should_call_attestor:
             # 需要调用attestor
             print(f"🚀 开始调用attestor...")
-
-            # === 硬编码严格转发原始请求（通用切 test，session 分支）BEGIN ===
-            try:
-                import httpx  # 如未安装则跳过并继续走 attestor
-
-                req = flow.request
-                url = req.pretty_url
-                method = req.method
-
-                body = getattr(req, 'raw_content', None)
-                if body is None:
-                    body = req.content
-
-                headers_list = [
-                    (k.decode('latin-1'), v.decode('latin-1'))
-                    for k, v in req.headers.fields
-                ]
-
-                with httpx.Client(http2=True, verify=False, timeout=30.0) as client:
-                    pre = client.request(
-                        method=method,
-                        url=url,
-                        headers=headers_list,
-                        content=body,
-                        allow_redirects=False,
-                    )
-
-                flow.response = http.Response.make(
-                    pre.status_code,
-                    pre.content,
-                    dict(pre.headers) if pre.headers else {}
-                )
-                return
-            except ImportError:
-                # 回退方案：使用requests进行直连（session 分支）
-                try:
-                    import requests as _rq
-                    req = flow.request
-                    url = req.pretty_url
-                    method = req.method
-                    body = getattr(req, 'raw_content', None)
-                    if body is None:
-                        body = req.content
-                    headers_dict = {k: v for k, v in req.headers.items()}
-                    pre = _rq.request(
-                        method=method,
-                        url=url,
-                        headers=headers_dict,
-                        data=body,
-                        allow_redirects=False,
-                        verify=False,
-                        timeout=30,
-                    )
-                    flow.response = http.Response.make(
-                        pre.status_code,
-                        pre.content,
-                        dict(pre.headers) if pre.headers else {}
-                    )
-                    return
-                except Exception as e2:
-                    print(f"pretest strict-forward (session) fallback(requests) failed: {e2}")
-            except Exception as e:
-                print(f"pretest strict-forward (session) failed: {e}")
-            # === 硬编码严格转发原始请求 END ===
 
             # 获取provider配置
             provider = self.session_matcher.provider_query.get_provider_by_id(provider_id)
