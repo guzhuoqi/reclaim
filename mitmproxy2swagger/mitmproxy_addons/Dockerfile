@@ -6,6 +6,18 @@ RUN apt-get update -y && \
     apt-get install -y --no-install-recommends python3 python3-pip python3-venv ca-certificates curl make g++ && \
     rm -rf /var/lib/apt/lists/*
 
+# Copy OpenSSL configuration files to fix legacy renegotiation issue
+COPY ./mitmproxy2swagger/docker-configs/openssl-legacy.cnf /etc/ssl/openssl-legacy.cnf
+COPY ./mitmproxy2swagger/docker-configs/fix-openssl.sh /usr/local/bin/fix-openssl.sh
+
+# Fix OpenSSL legacy renegotiation issue for container proxy traffic
+RUN chmod +x /usr/local/bin/fix-openssl.sh && \
+    /usr/local/bin/fix-openssl.sh
+
+# Set environment variables for OpenSSL
+ENV OPENSSL_CONF=/etc/ssl/openssl.cnf \
+    SSL_CERT_DIR=/etc/ssl/certs
+
 WORKDIR /opt/reclaim
 
 # Build-time toggles for attestor-core handling

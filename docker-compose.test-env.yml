@@ -17,8 +17,6 @@ services:
       - ATTESTOR_PORT=8001
       - DISABLE_BGP_CHECKS=1
       - PRIVATE_KEY=${PRIVATE_KEY:-0x0123788edad59d7c013cdc85e4372f350f828e2cec62d9a2de4560e69aec7f89}
-      # 时区配置 - 设置为香港时区以匹配银行服务器
-      - TZ=Asia/Hong_Kong
       # ZK 相关配置
       - ZK_CONCURRENCY=1  # 降低并发避免内存问题
       - CONNECTION_TIMEOUT_MS=120000  # 增加连接超时到2分钟
@@ -52,10 +50,7 @@ services:
       - ATTESTOR_HOST_PORT=local
       # 指定 main-flow 数据目录路径
       - MAIN_FLOW_DATA_DIR=/app/main-flow/data
-      # 🔧 银行HTTP版本控制环境变量
-      - HSBC_HTTP_VERSION=${HSBC_HTTP_VERSION:-h2}
-      - CMB_HTTP_VERSION=${CMB_HTTP_VERSION:-auto}
-      - DEFAULT_HTTP_VERSION=${DEFAULT_HTTP_VERSION:-auto}
+
     depends_on:
       - attestor-core
     ports:
