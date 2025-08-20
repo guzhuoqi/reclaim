@@ -30,7 +30,6 @@ COPY ./commitlint.config.cjs /app/
 COPY ./scripts /app/scripts
 COPY ./proto /app/proto
 COPY ./avs /app/avs
-COPY ./examples /app/examples
 COPY ./docs /app/docs
 COPY ./browser /app/browser
 COPY ./cert /app/cert
