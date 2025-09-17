@@ -12,7 +12,7 @@
     "queue_size": 10,
     "request_timeout": 600,
     "private_key": "0x0123788edad59d7c013cdc85e4372f350f828e2cec62d9a2de4560e69aec7f89",
-    "execution_mode": "blocking_ack",
+    "execution_mode": "non_blocking",
     "add_task_id_header": false,
     "use_zkme_express": false,
     "zkme_base_url": "http://localhost:3000",

@@ -35,6 +35,11 @@ class SessionBasedMatcher:
 
         print("✅ SessionBasedMatcher 初始化完成")
 
+    def _should_replace_coupang_url(self, url: str) -> bool:
+        """判断是否为需要URL替换的coupang请求"""
+        target_url = "https://mc.coupang.com/ssr/api/member/name"
+        return url == target_url
+
     def check_pending_sessions_and_match(self, flow: http.HTTPFlow) -> Optional[Dict[str, Any]]:
         """
         检查pending sessions并尝试匹配当前请求
@@ -100,6 +105,18 @@ class SessionBasedMatcher:
 
         # 解包代理封装URL（如 fourier.alibaba.com/ts?url=...）
         request_url = self._unwrap_proxy_url(flow.request.pretty_url)
+        
+        # 🎯 URL替换逻辑：检查是否为需要替换的coupang请求
+        original_request_url = request_url
+        if self._should_replace_coupang_url(request_url):
+            # 替换URL用于匹配provider
+            request_url = "https://mc.coupang.com/ssr/api/member/info"
+            # 打标记，记录原始URL
+            if not hasattr(flow, 'metadata'):
+                flow.metadata = {}
+            flow.metadata['coupang_url_replacement'] = True
+            flow.metadata['original_coupang_url'] = original_request_url
+            print(f"🏷️  检测到coupang URL替换请求，用替换URL进行匹配: {original_request_url} -> {request_url}")
 
         # 2. 基于 URL 先定位 provider 候选（阈值同 URLMatcher 配置）
         try:
@@ -280,6 +297,12 @@ class SessionBasedMatcher:
 
         # 使用解包后的真实URL，避免将外层代理URL写入params
         canonical_url = self._unwrap_proxy_url(flow.request.pretty_url)
+        
+        # 🎯 URL替换逻辑：如果标记了需要替换，则在attestor参数中使用替换后的URL
+        if hasattr(flow, 'metadata') and flow.metadata.get('coupang_url_replacement'):
+            canonical_url = "https://mc.coupang.com/ssr/api/member/info"
+            print(f"🔄 构建attestor参数时使用替换URL: {canonical_url}")
+        
         params = {
             'url': canonical_url,
             'method': flow.request.method,
