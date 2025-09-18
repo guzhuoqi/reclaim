@@ -32,26 +32,30 @@ COPY ./attestor-core/package.json ./attestor-core/package-lock.json /opt/reclaim
 RUN mkdir -p /opt/reclaim/attestor-core/src/scripts \
     && sh -lc 'echo "" > /opt/reclaim/attestor-core/src/scripts/prepare.sh' \
     && if [ "$SKIP_ATTESTOR_BUILD" != "true" ]; then \
-         cd /opt/reclaim/attestor-core && npm ci --include=optional $NPM_CI_ARGS ; \
+         cd /opt/reclaim/attestor-core && \
+         npm ci --include=optional $NPM_CI_ARGS && \
+         echo "🔽  预下载 ZK 文件以启用缓存层" && \
+         npm run download:zk-files-force && \
+         echo "✅  ZK 文件已缓存: $(find node_modules/@reclaimprotocol/zk-symmetric-crypto/resources -type f 2>/dev/null | wc -l)" ; \
        else \
          echo "⏭️  Skip npm ci for attestor-core (will rely on runtime volume)" ; \
        fi
 COPY ./attestor-core /opt/reclaim/attestor-core
 RUN if [ "$SKIP_ATTESTOR_BUILD" != "true" ]; then \
       cd /opt/reclaim/attestor-core && \
-      if [ "$USE_PREBUILT_LIB" = "true" ] && [ -d lib ] ; then \
-        echo "⚡ Using prebuilt attestor-core lib (skip build)" ; \
-      else \
-        echo "🔧 Building attestor-core from source" && npm run build ; \
-      fi && \
-      echo "🔍 检查ZK文件状态..." && \
+      echo "🔍 检查ZK文件状态 (prebuild 缓存层)..." && \
       if [ -f "node_modules/@reclaimprotocol/zk-symmetric-crypto/resources/snarkjs/aes-256-ctr/circuit.wasm" ]; then \
-        echo "✅ 检测到预拷贝的ZK文件，跳过下载" && \
+        echo "✅ 已存在ZK文件，跳过下载" && \
         echo "📊 现有ZK文件数量: $(find node_modules/@reclaimprotocol/zk-symmetric-crypto/resources -type f 2>/dev/null | wc -l)"; \
       else \
         echo "📥 未检测到ZK文件，执行下载..." && \
         npm run download:zk-files && \
         echo "📊 ZK文件下载完成，文件数量: $(find node_modules/@reclaimprotocol/zk-symmetric-crypto/resources -type f 2>/dev/null | wc -l)"; \
+      fi && \
+      if [ "$USE_PREBUILT_LIB" = "true" ] && [ -d lib ] ; then \
+        echo "⚡ Using prebuilt attestor-core lib (skip build)" ; \
+      else \
+        echo "🔧 Building attestor-core from source" && npm run build ; \
       fi && \
       npm prune --omit=dev ; \
     else \
@@ -82,6 +86,6 @@ RUN mkdir -p /app/mitmproxy_addons/logs /app/mitmproxy_addons/data
 EXPOSE 8080 8082 8083
 
 # Default command: run mitmweb and sidecar flows proxy to avoid 403 from cross-container clients
-CMD ["sh", "-lc", "(/venv/bin/python flows_proxy.py & echo $! > /tmp/flows_proxy.pid) && /venv/bin/mitmweb -s attestor_forwarding_addon.py --listen-host 0.0.0.0 --listen-port 8080 --set web_host=0.0.0.0 --set web_port=8082 --set web_open_browser=false --set block_global=false --set block_private=false --set web_iface=0.0.0.0 --set confdir=/tmp --no-web-open-browser | tee -a logs/mitmweb.log"]
+CMD ["sh", "-lc", "(/venv/bin/python flows_proxy.py & echo $! > /tmp/flows_proxy.pid) && /venv/bin/mitmweb -s attestor_forwarding_addon.py --listen-host 0.0.0.0 --listen-port 8080 --set web_host=0.0.0.0 --set web_port=8082 --set web_open_browser=false --set block_global=false --set block_private=false --set web_iface=0.0.0.0 --set confdir=/tmp --no-web-open-browser --set ssl_insecure=true | tee -a logs/mitmweb.log"]
 
 

@@ -1,0 +1,15 @@
+# Exclude local dependencies and VCS metadata to keep context small and stable
+node_modules
+**/node_modules
+.git
+.gitignore
+.DS_Store
+npm-debug.log*
+yarn-error.log*
+**/.env
+**/.env.*
+**/dist
+**/build
+**/.cache
+**/.vscode
+**/.idea

@@ -12,7 +12,7 @@ import {
 } from 'esprima-next'
 import { JSONPath } from 'jsonpath-plus'
 import { ArraySlice, CompleteTLSPacket, ProviderParams, RedactedOrHashedArraySlice, Transcript } from 'src/types'
-import { getHttpRequestDataFromTranscript, HttpRequest, HttpResponse, isApplicationData, makeHttpResponseParser, REDACTION_CHAR_CODE } from 'src/utils'
+import { getHttpRequestDataFromTranscript, HttpRequest, HttpResponse, isApplicationData, makeHttpResponseParser, REDACTION_CHAR_CODE, logger } from 'src/utils'
 
 export type JSONIndex = {
     start: number
@@ -29,7 +29,7 @@ try {
 		throw new Error()
 	}
 } catch{
-	console.log('RE2 not found. Using standard regex')
+	logger.debug('RE2未安装，回退使用标准正则（非致命）')
 }
 
 let jsd
@@ -337,10 +337,10 @@ export function makeRegex(str: string) {
 	// 🔧 修复：当RE2不可用时，转换Python风格的命名捕获组为JavaScript兼容格式
 	// 将 (?P<name>...) 转换为 (?<name>...)
 	const convertedStr = str.replace(/\(\?P<([^>]+)>/g, '(?<$1>')
-	
-	console.log('⚠️ RE2 not found. Using standard regex with Python-to-JS conversion')
+
+	logger.debug('RE2未安装，使用标准正则（含Python命名组到JS转换），非致命')
 	if (convertedStr !== str) {
-		console.log(`🔧 转换Python风格正则: "${str}" -> "${convertedStr}"`)
+		logger.debug(`转换Python风格正则: "${str}" -> "${convertedStr}"`)
 	}
 
 	return new RegExp(convertedStr, 'sgi')
