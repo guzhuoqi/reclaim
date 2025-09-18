@@ -14,12 +14,12 @@ RUN echo '' > /app/src/scripts/prepare.sh
 
 WORKDIR /app
 
-RUN npm ci --include=optional
+RUN npm ci --include=optional && \
+    echo "🔽  预下载 ZK 文件以启用缓存层" && \
+    npm run download:zk-files-force && \
+    echo "✅  ZK 文件已缓存: $(find node_modules/@reclaimprotocol/zk-symmetric-crypto/resources -type f 2>/dev/null | wc -l)"
 
-# 🚀 拷贝预拷贝的ZK文件（如果存在）
-# 注意：如果目录不存在，构建会失败，这是预期行为
-# 请确保在构建前运行预拷贝命令
-COPY ./node_modules/@reclaimprotocol/zk-symmetric-crypto /app/node_modules/@reclaimprotocol/zk-symmetric-crypto
+# 不再从宿主 node_modules 拷贝，避免覆盖容器内缓存的 ZK 文件
 
 # 🎯 优化拷贝：只拷贝源代码，避免覆盖 node_modules 中的预拷贝文件
 COPY ./src /app/src

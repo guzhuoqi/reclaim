@@ -1,6 +1,4 @@
 node_modules
-# 但是允许预拷贝的ZK文件
-!node_modules/@reclaimprotocol/zk-symmetric-crypto
 /lib
 browser/resources
 example-local
