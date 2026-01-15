@@ -50,6 +50,10 @@ services:
       - ATTESTOR_HOST_PORT=local
       # 指定 main-flow 数据目录路径
       - MAIN_FLOW_DATA_DIR=/app/main-flow/data
+      # 防止代理死循环：配置代理自己的地址，避免递归调用
+      # 格式：多个地址用逗号分隔，支持域名和IP
+      # 示例：LOOP_PREVENTION_HOSTS=proxy.example.com,10.0.0.5,my-proxy.internal
+      - LOOP_PREVENTION_HOSTS=${PROXY_ADDRESS:-10.10.3.216}
 
     depends_on:
       - attestor-core

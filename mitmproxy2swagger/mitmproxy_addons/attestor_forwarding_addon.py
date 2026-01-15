@@ -646,6 +646,12 @@ class AttestorForwardingAddon:
         self.binding_path: str = "/bind"
         self.binding_ttl_seconds: int = 15 * 60
 
+        # 防止代理死循环：从环境变量读取需要阻止的地址
+        loop_prevention_hosts = os.environ.get("LOOP_PREVENTION_HOSTS", "")
+        self.loop_prevention_hosts = [h.strip() for h in loop_prevention_hosts.split(",") if h.strip()]
+        if self.loop_prevention_hosts:
+            print(f"Loop prevention enabled: {', '.join(self.loop_prevention_hosts)}")
+
         # 初始化session-based匹配器
         self.session_matcher = get_session_matcher()
         print("✅ AttestorForwardingAddon 已集成 SessionBasedMatcher")
@@ -832,6 +838,18 @@ class AttestorForwardingAddon:
         if not ctx.options.attestor_enabled:
             return
 
+        # 防循环检查：最高优先级，避免代理访问自己造成死循环
+        if self._is_loop_request(flow):
+            flow.response = http.Response.make(
+                502,  # Bad Gateway
+                b"Loop detected: proxy cannot forward to itself",
+                {"Content-Type": "text/plain"}
+            )
+            self.metrics["loop_prevented"] += 1
+            if self.logger:
+                self.logger.warning(f"Loop prevented: {flow.request.host}")
+            return
+
         # 更新指标
         self.metrics["total_requests"] += 1
 
@@ -871,6 +889,18 @@ class AttestorForwardingAddon:
         # 记录日志
         if self.logger:
             self.logger.info(f"处理请求: {flow.request.method} {flow.request.pretty_url}")
+
+    def _is_loop_request(self, flow: http.HTTPFlow) -> bool:
+        """检查请求是否会造成代理死循环"""
+        if not self.loop_prevention_hosts:
+            return False
+        
+        host = flow.request.host
+        # 检查主机名或IP是否匹配
+        for blocked_host in self.loop_prevention_hosts:
+            if blocked_host in host or host == blocked_host:
+                return True
+        return False
 
     def _maybe_handle_binding_request(self, flow: http.HTTPFlow) -> bool:
         """拦截并处理绑定请求: http://bind.reclaim.local/bind?session_id=xxx
